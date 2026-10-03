@@ -1,0 +1,17 @@
+# systemd user unit. Install with:
+#   ln -sf "$PWD/recorder/binance-recorder.service" ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now binance-recorder
+[Unit]
+Description=Binance futures market-data recorder (BTCUSDT, BTCUSDC)
+StartLimitIntervalSec=0
+
+[Service]
+WorkingDirectory=/home/bread/Documents/BinanceMarketMaking
+ExecStart=/home/bread/Documents/BinanceMarketMaking/.venv/bin/python recorder/record.py --out data
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=10
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target

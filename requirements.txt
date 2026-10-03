@@ -1,0 +1,6 @@
+websockets>=17.1
+pyarrow>=25.0
+orjson>=3.12
+polars>=1.44  # recorder/check_data.py, sim/
+numba>=0.68   # sim/queue_sim.py
+pytest>=8     # sim/test_queue_sim.py
