@@ -6,4 +6,6 @@ Cycle arbitrage on Binance spot across USDT, USDC, BTC, ETH and BNB.
 * [`research/`](research/): a reference simulator (74-cycle enumeration, top-of-book screen, depth-aware sizer, routing) and scripts to:
   * record and replay live order books;
   * rank pairs for market making, and compare fair-value estimators (USDT as source of truth won);
-  * measure perp funding and spot–perp basis from Binance's public archive.
+  * measure perp funding and spot–perp basis from Binance's public archive;
+  * measure latency to Binance per AWS zone, and probe DEX (PancakeSwap) vs Binance prices.
+* [`ops/`](ops/): Phase 0 on AWS Tokyo. A step-by-step runbook plus scripts that record the streams around the clock and ship each finished day to S3.

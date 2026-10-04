@@ -1,6 +1,6 @@
 # Binance spot cycle arbitrage: plan
 
-Draft v4, 2026-10-04: reads fair value from the USDT books (§13.1) and fits the plan to 15k AUD (§13.5). Assets: USDT, USDC, BTC, ETH, BNB on Binance spot.
+Draft v5, 2026-10-04: Phase 0 set-up for AWS Tokyo ([`ops/README.md`](ops/README.md)), an Australian spot-only account (§13.5), DEX–CEX (§15). Assets: USDT, USDC, BTC, ETH, BNB on Binance spot.
 
 ## 0. Recommendations
 
@@ -19,6 +19,7 @@ Draft v4, 2026-10-04: reads fair value from the USDT books (§13.1) and fits the
 9. **Expect cents per trade at $100 packets.** 5 bps net on $100 is $0.05. Profit must come from frequency, so Phase 0 should count opportunities per day above your hurdle, not just whether any exist. Grow inventory only if it finds size worth taking (§5.2).
 10. **Market making: quote the slow cross pairs against fair value read from the USDT books, and get the maker fee to zero first.** Hedging each fill straight away through the graph never paid: the 7.1–7.5 bps taker hedge outweighs any spread here. Unhedged quotes at the touch need a maker fee of zero or less, and real fills on the cross pairs were often picked off by arbitrageurs. But fills where the quote was already ≥ 1 bps better than USDT-based fair value earned +1.9 to +2.6 bps on ETHBTC, BNBBTC and BNBETH. A maker that re-quotes off the USDT books keeps those and dodges the stale-quote losses. Reading fair value from USDT beat the median of routes in a direct comparison (§13.1). Build the quoting engine and run it in shadow now; go live once you're inside Binance's maker programme.
 11. **Perps: hedge first, carry second.** Over the last year a short perp against held coins earned funding rather than cost it. Cash-and-carry earned ~2.5–3.6% a year gross on BTC and ETH: slow and modest at current funding. Intraday basis trading doesn't pay at these fees, because the basis moves under 1 bps an hour (§13.2–§13.3).
+12. **DEX–CEX arbitrage: not on these assets at your fees.** PancakeSwap's deepest pools tracked Binance within 1–3 bps. In 10 minutes the best moment was still 4.3 bps short of covering your taker fee and the pool fee (§15).
 
 ## 1. The graph
 
@@ -327,7 +328,7 @@ The hot loop runs on one thread with no locks. The treasury and recorder run off
 
 | Phase | What | Exit criterion |
 |---|---|---|
-| **0. Measure** | Run the Python recorder on a Tokyo instance for 1–2 weeks, including volatile days. JSON streams answer this question; no C++ is needed yet. Replay with `--fees "7.5,USDCUSDT=0,BTCUSDC=7.125,ETHUSDC=7.125,BNBUSDC=7.125" --packet-usdt 100`. Also record `aggTrade` streams for markouts (§13.1), and perp `bookTicker` / `markPrice` streams (§13.2). Run `basis_funding.py` monthly. Measure `order.test` round-trip per AZ. | Enough episodes per day above ~15–17 bps (the 14.6 bps hurdle plus a buffer), lasting longer than your measured round-trip, at sizes that make cents-per-trade worth running. **Otherwise stop, or revisit fees (higher tier, maker legs).** |
+| **0. Measure** | Run the Python recorder on a Tokyo instance for 1–2 weeks, including volatile days. JSON streams answer this question; no C++ is needed yet. Replay with `--fees "7.5,USDCUSDT=0,BTCUSDC=7.125,ETHUSDC=7.125,BNBUSDC=7.125" --packet-usdt 100`. Also record `aggTrade` streams for markouts (§13.1), and perp `bookTicker` / `markPrice` streams (§13.2). Run `basis_funding.py` monthly. Measure latency per AZ (`latency_probe.py`). Step-by-step set-up: [`ops/README.md`](ops/README.md). | Enough episodes per day above ~15–17 bps (the 14.6 bps hurdle plus a buffer), lasting longer than your measured round-trip, at sizes that make cents-per-trade worth running. **Otherwise stop, or revisit fees (higher tier, maker legs).** |
 | **1. Shadow** | Build the C++ feed handler, books, screen and sizer (§8.3), golden-tested against the Python core. Run them live and log would-be orders without sending them. Score each against the books seen 1, 5 and 20 ms later (would it have filled?). | Shadow P(fill) and P&L agree with the Phase 0 replay. |
 | **2. Small live** | Add the C++ order gateway. ~$100 packets, cross-quote triangles only, one cycle in flight, IOC. Benchmark the WebSocket API against FIX. | Fill rates, slippage and repair costs inside the Phase 1 model. |
 | **3. Scale** | More inventory if Phase 0–2 found the size, concurrent cycles with depth allocation, other cycle families, the maker-leg variant, more assets. | Each step pays for its added risk. |
@@ -569,13 +570,15 @@ What it means:
 
 Your answers settle the scale: 15k AUD in total, roughly US$10k at ~0.65 USD per AUD. Three things follow from it.
 
-* **Perps may not be available to you at all.** If the account is Australian, retail clients generally can't trade Binance derivatives. ASIC cancelled Binance Australia Derivatives' licence in April 2023, and in 2026 a court penalised it A$10M for letting retail clients into derivatives. Wholesale clients still can, subject to the wholesale-client tests.
-  * Without perps, the carry trade, the perp hedges and perp market making (§13.2–§13.3) drop out.
-  * What remains is spot-only: taker cycles, spot making, and inventory kept small instead of hedged.
-  * Confirm your classification before building anything that needs futures.
-* **VIP 2 needs more than this account will have.** Binance's criteria require both ≥ $5M of 30-day spot volume and ≥ 25 BNB (about US$20k).
-  * Unless Binance offers you a trial or another route, plan on VIP 0 with the BNB discount: 0.075% maker and taker, or 0.075% / 0.07125% on USDC pairs.
-  * Only the maker rate differs from your VIP 2 numbers, and no conclusion here depends on it. Taker cycles never cleared even 5 bps per leg, and making needs a maker fee of zero either way.
+* **Perps: not available on an Australian retail account.** You've confirmed the account is Australian, and retail clients there generally can't trade Binance derivatives. ASIC cancelled Binance Australia Derivatives' licence in April 2023, and in 2026 a court penalised it A$10M for letting retail clients into derivatives. Only wholesale clients still can.
+  * Unless you qualify as wholesale, plan spot-only: taker cycles, spot making, and inventory kept small instead of hedged. The carry trade, the perp hedges and perp market making (§13.2–§13.3) are off the table.
+  * Keep recording public perp data anyway (the Phase 0 kit does). It costs nothing, perps carry most of the volume, and they may be a better source of fair value for spot than the USDT books. That's a Phase 0 test.
+* **VIP 2 through borrowed BNB doesn't add up.**
+  * BNB borrowed on margin doesn't count: Binance counts a margin account's *net* BNB, i.e. holdings minus borrowed BNB and interest.
+  * BNB borrowed through Crypto Loans and held in spot does appear to count, since the FAQ nets only margin. But the loan needs collateral worth more than the ~US$20k of BNB borrowed, which is more than the whole 15k AUD, plus interest.
+  * The VIP Borrower Program only raises borrowing limits; it doesn't grant trading-fee tiers.
+  * VIP 2 also needs ≥ $5M of 30-day spot volume. At 0.075% that volume would cost about US$3,750 a month in fees unless it is already profitable.
+  * So plan on VIP 0 with the BNB discount: 0.075% maker and taker, or 0.075% / 0.07125% on USDC pairs. Only the maker rate differs from the VIP 2 numbers, and no conclusion here depends on it. Taker cycles never cleared even 5 bps per leg, and making needs a maker fee of zero either way.
 * **Portfolio margin probably isn't available yet.** Binance's last published requirement for regular users was 100,000 USDT across the cross-margin and futures wallets (April 2024). Without it, a perp hedge needs its own margin in the futures wallet: hedging $3k of coins at 3× leverage ties up about $1k more.
 
 What the capital is for, at this size:
@@ -583,37 +586,75 @@ What the capital is for, at this size:
 * **The edges measured so far are worth cents to a few dollars a day here.** The capital's main job is to fund Phase 0 and a careful start, not to earn yet. Keep most of it in stablecoins until a strategy passes its gate (§13.4).
 * **Taker cycles** need about US$500 of working inventory (~$100 per asset) plus a small BNB fee float.
 * **Making** stays in shadow until the maker fee is zero. The programme's ~$20M a month is about 2,000 turns of this whole book every month, so it only becomes reachable once a strategy is profitable per trade at your fees.
-* **Carry** is the one track that works at any size, but at last year's funding (~3% a year) it earns about A$25 a month per A$10k, if perps are available to you at all.
+* **Carry** would be the one track that works at any size, but it needs perps (see above). Even then, last year's funding (~3% a year) earns about A$25 a month per A$10k.
 
 ## 14. Decisions so far, and open questions
 
 Decided on 2026-10-04:
 
-* **Fees (as you expect them):** VIP 2, paid in BNB. 0.06% maker on all pairs. 0.075% taker on USDT and cross pairs, 0.07125% taker on USDC pairs. USDCUSDT free. Futures ≈ 0.02% / 0.05%. See §13.5 for whether VIP 2 is reachable.
+* **Account:** Australian, retail. Spot only unless you qualify as a wholesale client (§13.5). Perp data is still recorded for research.
+* **Fees for planning:** VIP 0 with BNB. 0.075% maker and taker; USDC pairs 0.075% / 0.07125%; USDCUSDT free. VIP 2 isn't reachable at this size (§13.5).
 * **Capital:** 15k AUD in total (§13.5). Start with ~$100 per coin of working inventory.
 * **Live engine:** C++ (§8.3). Python stays as the research tooling and reference implementation.
-* **Scope:** taker cycles, market making (working towards Binance's maker programme), and perps for hedging and spot–perp basis (§13), subject to futures access (§13.5).
+* **Scope:** taker cycles and spot market making, working towards Binance's maker programme (§13).
 * **Fair value for making:** read from the USDT books (§13.1).
-* **Portfolio margin:** you plan to enable it; check eligibility (§13.5).
+* **Phase 0:** recorder on AWS Tokyo, set up with [`ops/README.md`](ops/README.md).
 * **Account manager:** once the account is approved, ask them about the maker programme's requirements.
 
 Open:
 
-1. **Futures access:** is the account Australian, and if so, are you classified as a wholesale client? This decides whether the perps track exists at all.
-2. **VIP 2:** how do you expect to qualify (a trial, a referral offer)? Otherwise the plan assumes VIP 0 maker fees.
-3. **Phase 0:** when can the Tokyo recorder start? It's the next concrete step for every track.
+1. **Wholesale status:** only matters if you want the perps track back. It's your call whether to pursue it.
+2. **API key:** once the account is approved, create an Ed25519 API key for later phases. Make it trade-only, with withdrawals disabled and access restricted to the trading instance's Elastic IP. Phase 0 doesn't need one.
+3. **DEX–CEX:** park it, or record it alongside Phase 0 (§15)?
+
+## 15. DEX–CEX arbitrage
+
+**The idea.** Buy on a DEX and sell on Binance, or the reverse, when their prices diverge. The two legs can't be atomic, and moving money between a chain and the exchange takes minutes and fees, so it needs inventory on both sides. That's the parallel model of §5 with a wallet as an extra venue. For this graph's assets the natural place to look is PancakeSwap on BNB Chain.
+
+**Measured** with `research/dex_probe.py`: 10 minutes on 2026-10-04, from this sandbox. It compares the deepest PancakeSwap v3 pools with Binance's top of book, after the pool fee, a 0.075% Binance taker fee, and gas on a $1,000 swap.
+
+| Pool (fee) | Gap vs Binance mid: median / p95 / max (bps) | Best edge after costs (bps) |
+|---|---|---:|
+| WBNB/USDT (0.01%) | 0.7 / 1.6 / 3.2 | −5.4 |
+| WBNB/USDT (0.05%) | 3.7 / 5.3 / 6.3 | −6.3 |
+| BTCB/USDT (0.05%) | 3.7 / 5.2 / 8.2 | −4.3 |
+| ETH/USDT (0.05%) | 2.7 / 4.7 / 8.1 | −4.5 |
+| WBNB/USDC (0.01%) | 0.8 / 2.3 / 3.5 | −4.8 |
+| USDC/USDT (0.01%) | 0.7 / 0.7 / 0.7 | −0.4 (the Binance leg is fee-free) |
+
+None of the 388 samples was profitable. Gas is negligible on BNB Chain, about 0.06 bps of a $1,000 swap. The obstacles are fees and competition:
+
+* **The pools are already arbitraged against Binance every block.** The 0.01% pools sat within 1–3 bps of Binance; the 0.05% pools stayed inside their fee band. Searchers on top fee tiers pay a fraction of your exchange fee and bid block builders for priority, so a gap you can see has usually closed before your transaction lands.
+* **Your 0.075% taker fee is most of the hurdle.** The best moment in 10 minutes was still 4.3 bps short.
+* **It adds new risks and work.**
+  * The two legs can't be atomic.
+  * A hot wallet and token approvals have to be secured.
+  * Your own swaps can be front-run.
+  * Rebalancing means deposits and withdrawals.
+  * For an Australian taxpayer, every swap is a capital-gains event to record.
+
+**Verdict: not on the five majors at your fees.** The on-chain edges that do exist sit in riskier places:
+
+* long-tail tokens and new pools: less competition, but thin liquidity, rugs and honeypots;
+* volatility spikes, when pools lag for more than a block;
+* providing liquidity rather than taking it, which is a different business with its own risks.
+
+To keep the door open at no cost, run `dex_probe.py` from the Tokyo box for an hour or two during busy trading. Look again only if the gaps clear ~10 bps.
 
 ## Appendix: research code
 
 ```
 research/arb_core.py           graph, 74-cycle enumeration, top-of-book screen, depth-aware sizer, open-path routing (pure functions)
-research/record_streams.py     record bookTicker / depth20 for the 10 symbols to JSONL(.gz)
+research/record_streams.py     record any spot or perp stream to JSONL(.gz), optionally one file per UTC day
 research/analyze_recording.py  replay a recording: update rates, spreads, net-positive episodes per fee level or per-pair
                                fee schedule (--fees), closest cycles, optimal sizes (optionally capped, --packet-usdt)
 research/analyze_making.py     which pairs to make: hedged-at-once edge, quote edge vs graph fair value, realized spread
                                of real fills (--trades, an aggTrade recording)
 research/basis_funding.py      perp funding history and spot-perp basis from the public archive (data.binance.vision)
 research/compare_fair_values.py  which fair-value estimator to make markets off (own mid, route median, USDT, volume-weighted)
+research/latency_probe.py      REST, WebSocket API and market-data latency from the box it runs on (pick the Tokyo AZ)
+research/dex_probe.py          PancakeSwap v3 (BNB Chain) prices vs Binance top of book, after pool fee, taker fee and gas
+ops/                           Phase 0 on AWS Tokyo: runbook, bootstrap, systemd recorders, hourly S3 upload, IAM policies
 research/test_arb_core.py      unit tests (python research/test_arb_core.py)
 ```
 

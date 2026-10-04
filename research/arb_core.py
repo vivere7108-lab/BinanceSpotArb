@@ -23,6 +23,7 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from itertools import combinations, permutations
+from typing import Union
 
 ASSETS = ("USDT", "USDC", "BTC", "ETH", "BNB")
 
@@ -42,7 +43,7 @@ SYMBOLS = {
 }
 
 
-Fee = float | Mapping[str, float]  # one rate for every leg, or a rate per symbol
+Fee = Union[float, Mapping[str, float]]  # one rate for every leg, or a rate per symbol (Union: runs on Python 3.9)
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,18 @@
+# One recorder per stream config: binance-recorder@<name> reads /etc/binance-recorder/<name>.env
+# and writes /data/live/<name>-YYYY-MM-DD.jsonl.gz, a new file every UTC day.
+[Unit]
+Description=Binance stream recorder (%i)
+After=network-online.target time-sync.target
+Wants=network-online.target
+
+[Service]
+User=recorder
+EnvironmentFile=/etc/binance-recorder/%i.env
+WorkingDirectory=/opt/binance-arb/research
+ExecStart=/opt/binance-arb/.venv/bin/python record_streams.py --base-url ${BASE_URL} --stream ${STREAM} --symbols ${SYMBOLS} --seconds 0 --out /data/live/%i-{date}.jsonl.gz
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

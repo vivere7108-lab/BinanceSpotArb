@@ -1,0 +1,7 @@
+[Unit]
+Description=Move finished Binance recordings to S3
+
+[Service]
+Type=oneshot
+User=recorder
+ExecStart=/opt/binance-arb/ops/upload_to_s3.sh __BUCKET__
