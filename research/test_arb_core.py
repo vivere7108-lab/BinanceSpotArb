@@ -2,7 +2,7 @@
 import math
 from collections import Counter
 
-from arb_core import (Book, Cycle, best_route, enumerate_cycles, enumerate_paths, fill_path, log_edge,
+from arb_core import (Book, Cycle, best_route, enumerate_cycles, enumerate_paths, fill_path, hurdle, log_edge,
                       make_leg, size_cycle)
 
 
@@ -73,6 +73,17 @@ def test_path_mode_walks_levels_and_routes():
     legs, r = best_route("USDT", "ETH", 50.0, books(), fee=0.0, max_legs=2)
     assert [leg.symbol for leg in legs] == ["BTCUSDT", "ETHBTC"]
     assert math.isclose(r.start_out, 10.0)
+
+
+def test_per_symbol_fee_schedule():
+    # Cross-quote triangle through a fee-free USDCUSDT: only two legs pay.
+    c = Cycle((make_leg("USDT", "BTC"), make_leg("BTC", "USDC"), make_leg("USDC", "USDT")))
+    fees = {"BTCUSDT": 0.00075, "BTCUSDC": 0.0007125, "USDCUSDT": 0.0}
+    assert math.isclose(hurdle(c, fees) * 1e4, 14.63, abs_tol=0.01)
+    tob = {"BTCUSDT": (99.99, 100.0), "BTCUSDC": (100.2, 100.21), "USDCUSDT": (1.0, 1.0001)}
+    gross = log_edge(c, tob)
+    assert math.isclose(log_edge(c, tob, fees), gross - hurdle(c, fees))
+    assert gross > 0 and log_edge(c, tob, fees) > 0  # 20 bps gross clears the 14.6 bps hurdle
 
 
 if __name__ == "__main__":

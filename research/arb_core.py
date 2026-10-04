@@ -11,14 +11,16 @@ Conventions
   base (lift the asks).
 * Rates are "units of dst per unit of src". A cycle is profitable when the
   product of its leg rates, after fees, is above 1.
-* ``fee`` is the per-leg taker fee as a fraction (7.5 bps = 0.00075), modelled
-  as taken from the proceeds. With BNB fee payment the fee is charged in BNB
-  instead. To first order the cost is the same; the live engine books it
-  separately.
+* ``fee`` is the taker fee as a fraction (7.5 bps = 0.00075): one rate for
+  every leg, or a mapping symbol -> rate when pairs differ (e.g. a fee-free
+  USDCUSDT). It is modelled as taken from the proceeds. With BNB fee payment
+  the fee is charged in BNB instead. To first order the cost is the same; the
+  live engine books it separately.
 """
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from itertools import combinations, permutations
 
@@ -38,6 +40,9 @@ SYMBOLS = {
     "BNBBTC": ("BNB", "BTC"),
     "BNBETH": ("BNB", "ETH"),
 }
+
+
+Fee = float | Mapping[str, float]  # one rate for every leg, or a rate per symbol
 
 
 @dataclass(frozen=True)
@@ -100,19 +105,28 @@ def enumerate_cycles(min_len: int = 3, max_len: int = 5) -> list[Cycle]:
     return cycles
 
 
+def leg_fee(fee: Fee, leg: Leg) -> float:
+    return fee[leg.symbol] if isinstance(fee, Mapping) else fee
+
+
+def hurdle(cycle: Cycle, fee: Fee) -> float:
+    """Log gross edge the cycle must exceed to break even after fees."""
+    return -sum(math.log1p(-leg_fee(fee, leg)) for leg in cycle.legs)
+
+
 def top_rate(leg: Leg, bid: float, ask: float) -> float:
     """Gross top-of-book conversion rate for one leg (dst per src)."""
     return bid if leg.side == "SELL" else 1.0 / ask
 
 
-def log_edge(cycle: Cycle, tob: dict[str, tuple[float, float]], fee: float = 0.0) -> float:
-    """Log of the cycle's top-of-book rate product, net of ``fee`` per leg.
+def log_edge(cycle: Cycle, tob: dict[str, tuple[float, float]], fee: Fee = 0.0) -> float:
+    """Log of the cycle's top-of-book rate product, net of fees.
 
     > 0 means profitable at the touch. Cheap enough to run on every book update.
     ``tob`` maps symbol -> (best bid, best ask).
     """
     edge = sum(math.log(top_rate(leg, *tob[leg.symbol])) for leg in cycle.legs)
-    return edge + len(cycle.legs) * math.log1p(-fee)
+    return edge - hurdle(cycle, fee)
 
 
 @dataclass
@@ -136,7 +150,7 @@ def _leg_levels(leg: Leg, book: Book, fee: float) -> list[tuple[float, float, fl
     return [(px * qty, (1.0 - fee) / px, px) for px, qty in book.asks if qty > 0]  # spend quote, receive base
 
 
-def size_cycle(cycle: Cycle, books: dict[str, Book], fee: float,
+def size_cycle(cycle: Cycle, books: dict[str, Book], fee: Fee,
                max_in: float = math.inf, min_edge: float = 0.0) -> Sizing:
     """Find the profit-maximising size for one cycle by walking every leg's depth at once.
 
@@ -150,7 +164,7 @@ def size_cycle(cycle: Cycle, books: dict[str, Book], fee: float,
     ``min_edge`` is a marginal hurdle: liquidity is only taken where the next unit
     still earns at least that much, which keeps a latency buffer on the deep levels.
     """
-    levels = [_leg_levels(leg, books[leg.symbol], fee) for leg in cycle.legs]
+    levels = [_leg_levels(leg, books[leg.symbol], leg_fee(fee, leg)) for leg in cycle.legs]
     n = len(levels)
     res = Sizing(leg_in=[0.0] * n, leg_base_qty=[0.0] * n, limit_px=[math.nan] * n)
     if any(not lv for lv in levels):
@@ -202,7 +216,7 @@ def enumerate_paths(src: str, dst: str, max_legs: int = 4) -> list[tuple[Leg, ..
     return paths
 
 
-def fill_path(legs: tuple[Leg, ...], books: dict[str, Book], fee: float, amount: float) -> Sizing | None:
+def fill_path(legs: tuple[Leg, ...], books: dict[str, Book], fee: Fee, amount: float) -> Sizing | None:
     """Push a fixed ``amount`` of the first leg's asset through an open path, walking each book.
 
     Used for rebalancing and BNB top-ups, where the amount is given and there is no profit to
@@ -215,7 +229,7 @@ def fill_path(legs: tuple[Leg, ...], books: dict[str, Book], fee: float, amount:
         res.leg_in.append(x)
         out = base = 0.0
         remaining, px = x, math.nan
-        for cap, rate, px in _leg_levels(leg, books[leg.symbol], fee):
+        for cap, rate, px in _leg_levels(leg, books[leg.symbol], leg_fee(fee, leg)):
             take = min(remaining, cap)
             out += take * rate
             base += take if leg.side == "SELL" else take / px
@@ -231,7 +245,7 @@ def fill_path(legs: tuple[Leg, ...], books: dict[str, Book], fee: float, amount:
     return res
 
 
-def best_route(src: str, dst: str, amount: float, books: dict[str, Book], fee: float,
+def best_route(src: str, dst: str, amount: float, books: dict[str, Book], fee: Fee,
                max_legs: int = 4) -> tuple[tuple[Leg, ...], Sizing] | None:
     """The path that turns ``amount`` of ``src`` into the most ``dst`` (smart order routing)."""
     best = None
