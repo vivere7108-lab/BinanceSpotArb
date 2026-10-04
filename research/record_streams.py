@@ -8,10 +8,13 @@ Each line is {"t": local receive time in ns, "m": raw combined-stream message}.
 Run it from the box you will trade from (AWS Tokyo): receive-time gaps between
 symbols are part of what you are measuring. Use a clock synced to the Amazon Time
 Sync Service (chrony) so local timestamps can be compared with exchange ones.
+It reconnects on its own (Binance closes every connection at 24 h), so it can run
+unattended for days; a reconnect leaves a gap of about a second in the data.
 """
 import argparse
 import asyncio
 import gzip
+import sys
 import time
 
 import websockets
@@ -24,15 +27,21 @@ async def record(base_url: str, stream: str, seconds: float, out_path: str) -> i
     n, t_end = 0, time.time() + seconds
     opener = gzip.open if out_path.endswith(".gz") else open
     with opener(out_path, "wt") as f:
-        async with websockets.connect(url, max_size=2**22, ping_interval=None) as ws:
-            # The server pings every 20 s and the client library answers; no client pings needed.
-            while time.time() < t_end:
-                try:
-                    msg = await asyncio.wait_for(ws.recv(), timeout=5)
-                except asyncio.TimeoutError:
-                    continue
-                f.write(f'{{"t":{time.time_ns()},"m":{msg}}}\n')
-                n += 1
+        while time.time() < t_end:
+            try:
+                async with websockets.connect(url, max_size=2**22, ping_interval=None) as ws:
+                    # The server pings every 20 s and the client library answers; no client pings needed.
+                    while time.time() < t_end:
+                        try:
+                            msg = await asyncio.wait_for(ws.recv(), timeout=5)
+                        except asyncio.TimeoutError:
+                            continue
+                        f.write(f'{{"t":{time.time_ns()},"m":{msg}}}\n')
+                        n += 1
+            except (websockets.ConnectionClosed, websockets.InvalidHandshake, OSError) as e:
+                # Binance closes every connection at 24 h (and on maintenance): reconnect and carry on.
+                print(f"reconnecting after {e!r}", file=sys.stderr)
+                await asyncio.sleep(1)
     return n
 
 
