@@ -9,9 +9,11 @@ maker programme) and with -0.8 bps (a top programme rebate):
 1. Hedged at once. A quote joins P's best bid (or ask), and every fill is
    flattened immediately through the best other path in the graph (taker fees
    from --fees). Edge = hedge rate vs the quote, before P's maker fee.
-2. Unhedged, against fair value. The fair value of P is the median of its three
-   two-leg routes through the other assets, at mid prices. Edge of a bid at the
-   touch = fair / bid - 1; of an ask = ask / fair - 1.
+2. Unhedged, against fair value. By default fair value is read from the USDT
+   books: every asset priced off its USDT book, fair = p(base) / p(quote). That
+   is the estimator compare_fair_values.py found best. `--fair routes` uses the
+   median of P's three two-leg routes instead. Edge of a bid at the touch =
+   fair / bid - 1; of an ask = ask / fair - 1.
 3. Realized spread (needs --trades, an aggTrade recording made alongside). For
    every real trade, the passive side's P&L against fair value 1 s, 10 s and
    60 s later. This is what a maker at the touch actually earned, adverse
@@ -39,7 +41,7 @@ def path_name(legs):
 LEGS = {(a, b): make_leg(a, b) for a in ASSETS for b in ASSETS if a != b}
 
 
-def fair_values(tob):
+def route_fair_values(tob):
     """Graph-implied mid of every symbol: median of its three two-leg routes, at mids."""
     mid = {s: (b + a) / 2 for s, (b, a) in tob.items()}
 
@@ -51,13 +53,23 @@ def fair_values(tob):
             for s, (base, quote) in SYMBOLS.items()}
 
 
+def usdt_fair_values(tob):
+    """USDT as the source of truth: every asset priced off its USDT book, fair = p(base) / p(quote)."""
+    mid = {s: (b + a) / 2 for s, (b, a) in tob.items()}
+    p = {"USDT": 1.0, "USDC": mid["USDCUSDT"], "BTC": mid["BTCUSDT"], "ETH": mid["ETHUSDT"], "BNB": mid["BNBUSDT"]}
+    return {s: p[base] / p[quote] for s, (base, quote) in SYMBOLS.items()}
+
+
+FAIR_VALUES = {"usdt": usdt_fair_values, "routes": route_fair_values}
+
+
 def share_above(values, bps):
     return sum(v > bps for v in values) / len(values) * 100
 
 
-def sample(tob, taker, k, out):
+def sample(tob, taker, k, out, fair_fn):
     """Record every symbol's edges at one time-grid point, k times (k grid points)."""
-    fair = fair_values(tob)
+    fair = fair_fn(tob)
     for s, (base, quote) in SYMBOLS.items():
         bid, ask = tob[s]
         h, legs = best_path_rate(base, quote, tob, taker, exclude=s)  # flatten a bid fill: sell the base
@@ -71,7 +83,7 @@ def sample(tob, taker, k, out):
         out["spread"][s].extend([(ask - bid) / ((ask + bid) / 2) * 1e4] * k)
 
 
-def replay(path, taker, sample_ms):
+def replay(path, taker, sample_ms, fair_fn):
     out = {"hedged": defaultdict(list), "fair": defaultdict(list), "spread": defaultdict(list),
            "paths": defaultdict(Counter), "fair_series": defaultdict(lambda: ([], []))}
     tob, step, next_t = {}, sample_ms * 1_000_000, None
@@ -84,10 +96,10 @@ def replay(path, taker, sample_ms):
             while next_t <= t:
                 k, next_t = k + 1, next_t + step
             if k:
-                sample(tob, taker, k, out)
+                sample(tob, taker, k, out, fair_fn)
         tob[d["s"]] = (float(d["b"]), float(d["a"]))
         if len(tob) == len(SYMBOLS):
-            for s, v in fair_values(tob).items():  # fair value after every update, for markouts
+            for s, v in fair_fn(tob).items():  # fair value after every update, for markouts
                 times, values = out["fair_series"][s]
                 times.append(t)
                 values.append(v)
@@ -199,8 +211,9 @@ if __name__ == "__main__":
     ap.add_argument("--trades", help="aggTrade recording made at the same time as --bookticker")
     ap.add_argument("--fees", required=True, help='per-pair taker fees in bps: "DEFAULT,SYMBOL=BPS,..."')
     ap.add_argument("--sample-ms", type=int, default=100)
+    ap.add_argument("--fair", choices=sorted(FAIR_VALUES), default="usdt", help="fair-value estimator (default usdt)")
     args = ap.parse_args()
-    out = replay(args.bookticker, parse_fees(args.fees), args.sample_ms)
+    out = replay(args.bookticker, parse_fees(args.fees), args.sample_ms, FAIR_VALUES[args.fair])
     marks = markouts(args.trades, out["fair_series"]) if args.trades else None
     # USDT value of one unit of each symbol's quote asset, from the last fair values.
     last = {s: v[-1] for s, (_, v) in out["fair_series"].items()}

@@ -1,6 +1,6 @@
 # Binance spot cycle arbitrage: plan
 
-Draft v3, 2026-10-04: adds market making, perps and spot–perp basis (§13) to v2's VIP 2 fees, ~$100-per-coin inventory and C++ engine. Assets: USDT, USDC, BTC, ETH, BNB on Binance spot.
+Draft v4, 2026-10-04: reads fair value from the USDT books (§13.1) and fits the plan to 15k AUD (§13.5). Assets: USDT, USDC, BTC, ETH, BNB on Binance spot.
 
 ## 0. Recommendations
 
@@ -17,7 +17,7 @@ Draft v3, 2026-10-04: adds market making, perps and spot–perp basis (§13) to 
    * **The order-rate limit** binds only through misses, since filled orders don't count against it.
    * **Streaming rate and simulation time** are engineering work at the µs level, not limits (§6, §8).
 9. **Expect cents per trade at $100 packets.** 5 bps net on $100 is $0.05. Profit must come from frequency, so Phase 0 should count opportunities per day above your hurdle, not just whether any exist. Grow inventory only if it finds size worth taking (§5.2).
-10. **Market making: quote the slow cross pairs against the graph's fair value, and get the maker fee to zero first.** Hedging each fill straight away through the graph never paid: the 7.1–7.5 bps taker hedge outweighs any spread here. Unhedged quotes at the touch need a maker fee of zero or less, and real fills on the cross pairs were often picked off by arbitrageurs. But fills where the quote was already ≥ 1 bps better than the graph's fair value earned +1.7 to +2.7 bps on ETHBTC, BNBBTC and BNBETH. A maker that re-quotes off the graph keeps those and dodges the stale-quote losses (§13.1). Build the quoting engine and run it in shadow now; go live once you're inside Binance's maker programme.
+10. **Market making: quote the slow cross pairs against fair value read from the USDT books, and get the maker fee to zero first.** Hedging each fill straight away through the graph never paid: the 7.1–7.5 bps taker hedge outweighs any spread here. Unhedged quotes at the touch need a maker fee of zero or less, and real fills on the cross pairs were often picked off by arbitrageurs. But fills where the quote was already ≥ 1 bps better than USDT-based fair value earned +1.9 to +2.6 bps on ETHBTC, BNBBTC and BNBETH. A maker that re-quotes off the USDT books keeps those and dodges the stale-quote losses. Reading fair value from USDT beat the median of routes in a direct comparison (§13.1). Build the quoting engine and run it in shadow now; go live once you're inside Binance's maker programme.
 11. **Perps: hedge first, carry second.** Over the last year a short perp against held coins earned funding rather than cost it. Cash-and-carry earned ~2.5–3.6% a year gross on BTC and ETH: slow and modest at current funding. Intraday basis trading doesn't pay at these fees, because the basis moves under 1 bps an hour (§13.2–§13.3).
 
 ## 1. The graph
@@ -79,6 +79,8 @@ Score all 74 cycles; it's cheap. Execute only 3-leg cycles in v1, starting with 
 ## 3. Fees
 
 ### 3.1 Your schedule (VIP 2, fees paid in BNB)
+
+VIP 2 needs ≥ $5M of 30-day spot volume and ≥ 25 BNB; see §13.5. At VIP 0 the maker rate is 0.075% instead of 0.06% and everything else below is unchanged.
 
 | Pairs | Maker | Taker |
 |---|---:|---:|
@@ -435,7 +437,23 @@ You've put three more things in scope: making markets (working towards a maker r
 
 ### 13.1 Market making: which pairs the graph says to make
 
-**Fair value from the graph.** For each pair, take the median of its three two-leg routes through the other assets, at mid prices. For example, ETHBTC's fair value comes from ETHUSDT/BTCUSDT, ETHUSDC/BTCUSDC and the BNB route. The slow cross pairs' fair value shows up in the fast USDT and USDC books before their own quotes move, and that is what protects a maker from being picked off.
+**Fair value: read it from the USDT books.** Price every asset off its USDT book and take fair = p(base) / p(quote). For example, ETHBTC's fair value is ETHUSDT / BTCUSDT and BTCUSDC's is BTCUSDT / USDCUSDT; a USDT pair's fair value is its own mid. The slow cross pairs and the USDC books show their fair value in the fast USDT books before their own quotes move, and that is what protects a maker from being picked off.
+
+An earlier version of this plan used the median of each pair's three two-leg routes. You asked whether tilting towards USDT does better, so I tested five estimators on the same 20 minutes of trades (`compare_fair_values.py`). Each fill is marked by its value in USDT terms 10 s later, because the plan offloads inventory through the USDT books or perps priced off them. The table assumes a maker had been on every fill where its quote was at least N bps better than that estimator's fair value 20 ms before the trade, and sums the P&L of those fills over all ten pairs (USDT, before fees). It is for comparing estimators, not a P&L forecast.
+
+| Fair value | N = 0 | N = 1 bps | N = 2 bps | Cross pairs only, N = 1 |
+|---|---:|---:|---:|---:|
+| The pair's own mid | −1,318 | −39 | +17 | +11 |
+| Median of the three routes (earlier plan) | −763 | −408 | −34 | +28 |
+| **USDT as the source of truth** | −1,113 | **−2** | **+33** | **+28** |
+| Routes, weighted by each route's traded volume | **−406** | −66 | +19 | +28 |
+| Routes plus the pair's own book, volume-weighted | −510 | −23 | +32 | +28 |
+
+* **USDT as the source of truth wins at the thresholds a maker would actually quote at (N ≥ 1 bps).** The route median was fooled on the big books: it kept 28% of BTCUSDT's fills, at −1.28 bps. USDT-based fair value treats a USDT pair's own book as the truth and doesn't make that mistake. On BTCUSDC it kept 14% of fills at +0.86 bps, where the route median kept 25% at −0.23 bps.
+* **On the cross pairs every graph estimator ties.** Their three routes mostly agree, and the USDT route dominates any volume weighting anyway.
+* **The USDT books lead, most clearly for BNB.** Within 10 s, BNBUSDC's mid closed 47% of its gap to the USDT-based fair value and 60–73% of the gap to the volume-weighted ones, but only 9% of the gap to the route median. BNBUSDT moved slightly away from the other books' implied price: it leads them. For BTC and ETH the effect was weaker (BTCUSDC and ETHUSDC closed only 3–15% of any gap).
+* **Volume-weighted routes are the better filter only at N = 0,** because they also filter the USDT pairs using the other books. A maker demanding no edge at all shouldn't be quoting, so this doesn't matter in practice. Keep the volume-weighted blend (routes plus own book) as the Phase 0 alternative to USDT.
+* **Exit through the deep books.** Marked instead to each pair's own mid 10 s later (exit on the same book), the cross pairs' filtered fills earned about half as much. Offload cross-pair inventory through the USDT books or perps, not by round-tripping the thin book.
 
 **Hedging every fill at once doesn't pay.** The test: quote at the touch and flatten each fill immediately through the best other path. That never had a positive edge in 30 minutes, even with a −0.8 bps rebate; the best case was −4.7 bps (BNBUSDC). The hedge leg's taker fee (7.1–7.5 bps) is bigger than the spreads and the usual USDT/USDC basis; the basis only beat it in brief spikes. So making has to be inventory-based: earn on many fills and offload only the net position, cheaply (perps at 2–5 bps, or passively).
 
@@ -443,42 +461,41 @@ You've put three more things in scope: making markets (working towards a maker r
 
 | Pair | Spread (bps) | Median edge per fill, bid / ask (bps) | Beats VIP 2 maker (6 bps) | Beats 0 (maker programme) | Beats −0.8 bps (top rebate) |
 |---|---:|---|---:|---:|---:|
-| BNBETH | 3.41 | 0.73 / 3.14 | 0.6–4% | 66–89% | 79–95% |
-| ETHBTC | 3.15 | 1.41 / 1.75 | ~0% | 84–85% | 92–93% |
-| BNBBTC | 1.08 | 0.95 / 0.54 | 0% | 67–73% | 89–90% |
-| BNBUSDC | 0.13 | 0.43 / −0.29 | 0% | 36–70% | 68–92% |
-| BTCUSDT | 0.00 | 0.51 / −0.51 | 0% | 28–72% | 68–98% |
-| USDCUSDT | 0.10 | −0.04 / 0.14 | 0% | 39–71% | 96–99% |
+| BNBETH | 3.41 | 0.93 / 2.97 | 0.5–3% | 70–89% | 81–95% |
+| ETHBTC | 3.15 | 1.72 / 1.44 | 0% | 77–88% | 89–96% |
+| BNBBTC | 1.08 | 1.24 / 0.26 | 0% | 57–73% | 84–89% |
+| BNBUSDC | 0.13 | 0.10 / 0.03 | 0% | 55–56% | 81–96% |
+| BTCUSDC | 0.00 | −0.57 / 0.58 | 0% | 20–81% | 70–99% |
 
-The other USDT/USDC pairs look like BTCUSDT, within ±0.3 bps.
+On the USDT pairs and USDCUSDT, fair value is the pair's own mid, so a quote at the touch is worth exactly half the spread (at most 0.06 bps).
 
-**What makers actually earned: the realized spread of real fills.** A separate recording of trades and top-of-book, 10:32–10:52 UTC (20 minutes, ~18,700 aggregated trades). For each trade, this is the passive side's P&L against the graph's fair value 10 s later, notional-weighted, before maker fees (`analyze_making.py --trades`):
+**What makers actually earned: the realized spread of real fills.** A separate recording of trades and top-of-book, 10:32–10:52 UTC (20 minutes, ~18,700 aggregated trades). For each trade, this is the passive side's P&L in USDT terms 10 s later, notional-weighted, before maker fees (`analyze_making.py --trades`, USDT fair value):
 
 | Pair | Fill notional (20 min) | All fills, +10 s (bps) | Only fills ≥ 1 bps better than fair: share kept / +10 s (bps) |
 |---|---:|---:|---|
-| ETHBTC | $186k | +1.18 | 37% / +2.33 |
-| BNBBTC | $133k | −1.39 | 26% / +2.69 |
-| BNBETH | $54k | −1.45 | 34% / +1.74 |
-| BNBUSDC | $263k | −2.13 | 12% / +0.47 |
-| BNBUSDT | $814k | −0.75 | 40% / +0.21 |
-| BTCUSDC | $2.19M | −0.93 | 26% / −0.01 |
-| BTCUSDT | $8.51M | −0.76 | 30% / −0.66 |
-| ETHUSDT | $2.69M | −0.83 | 15% / −0.52 |
-| ETHUSDC | $524k | −1.71 | 13% / −0.79 |
-| USDCUSDT | $28.9M | −0.12 | 0%; at ≥ 0 bps: 34% / +0.51 |
+| ETHBTC | $186k | +0.97 | 36% / +2.39 |
+| BNBBTC | $133k | −1.38 | 26% / +2.59 |
+| BNBETH | $54k | −1.66 | 33% / +1.91 |
+| BNBUSDC | $263k | −0.82 | 7% / +0.19 |
+| BNBUSDT | $814k | −0.92 | 16% / +0.63 |
+| BTCUSDC | $2.19M | −0.79 | 14% / +0.86 |
+| BTCUSDT | $8.51M | −0.73 | 4% / −0.15 |
+| ETHUSDT | $2.69M | −1.02 | 10% / −2.20 |
+| ETHUSDC | $524k | −1.77 | 8% / −1.21 |
+| USDCUSDT | $28.9M | −0.02 | 0%; at ≥ 0 bps: 95% / −0.02 |
 
-* **The average maker at the touch lost money to informed flow.** On every pair but ETHBTC, a passive fill was worth −0.1 to −2.1 bps ten seconds later, before fees. On BNBBTC and BNBUSDC the loss was there at the moment of the fill: those trades are mostly arbitrageurs picking off stale quotes, the same flow the taker-cycle engine would be part of.
-* **Quoting off the graph keeps the good fills.** Fills where the quote was already at least 1 bps better than fair value earned +1.7 to +2.7 bps on the three cross pairs, on 26–37% of their flow. That is the case for making those pairs: re-quote from the graph's fair value and never be the stale quote.
-* **The same filter barely helps on the big books.** Graph-aware fills on the USDT and USDC majors earned −0.8 to +0.5 bps; there, informed flow is faster than any fair value derived from the other books.
-* **USDCUSDT is already fee-free for you.** Fills on the right side of fair value earned +0.51 bps, but the book is very deep at each price, so queue position decides whether you'd get those fills at all.
-* **None of this survives a 6 bps maker fee.** At 0 (the maker programme), graph-aware making on ETHBTC, BNBBTC and BNBETH looks positive before queue effects. The cross pairs had only 37–255 trades in the window, so treat these as directions for Phase 0 to measure, not estimates.
+* **The average maker at the touch lost money to informed flow.** On the coin pairs other than ETHBTC, a passive fill was worth −0.7 to −1.8 bps ten seconds later, before fees. On BNBBTC the loss was there at the moment of the fill: those trades are mostly arbitrageurs picking off stale quotes, the same flow the taker-cycle engine would be part of.
+* **Quoting off USDT fair value keeps the good fills.** Fills where the quote was already at least 1 bps better than fair value earned +1.9 to +2.6 bps on the three cross pairs, on 26–36% of their flow. That is the case for making those pairs: re-quote off the USDT books and never be the stale quote.
+* **On the big books the filter keeps little.** It kept 4–16% of their fills, earning −2.2 to +0.9 bps. There, informed flow is as fast as the USDT books themselves.
+* **USDCUSDT has nothing to earn.** It's fee-free for you, but fills there were worth about zero (−0.02 bps), and the book is very deep at each price, so queue position would decide whether you'd get them at all.
+* **None of this survives a 6 bps maker fee** (or VIP 0's 7.5). At 0 (the maker programme), making ETHBTC, BNBBTC and BNBETH off USDT fair value looks positive before queue effects. The cross pairs had only 37–255 trades in the window, so treat these as directions for Phase 0 to measure, not estimates.
 
 **Ranking for v1 making**
 
-1. **ETHBTC, BNBBTC and BNBETH.** One-tick spreads worth 1–3.4 bps, slow quotes, and a fair value visible elsewhere. Graph-aware fills there earned +1.7 to +2.7 bps. They are small markets ($7–14M a day), so capacity is limited.
-2. **The USDC books, against their USDT twins** (BTCUSDC, ETHUSDC, BNBUSDC). The USDT book gives a sharp fair value and USDCUSDT makes inventory moves free. But there is little spread to earn, and graph-aware fills earned about zero (−0.8 to +0.5 bps), so this only works with a rebate.
+1. **ETHBTC, BNBBTC and BNBETH.** One-tick spreads worth 1–3.4 bps, slow quotes, and a fair value visible in the USDT books. Filtered fills there earned +1.9 to +2.6 bps. They are small markets ($7–14M a day), so capacity is limited.
+2. **The USDC books, against their USDT twins** (BTCUSDC, ETHUSDC, BNBUSDC). The USDT book gives a sharp fair value and USDCUSDT makes inventory moves free. But there is little spread to earn, and filtered fills were mixed (−1.2 to +0.9 bps), so this only works with a rebate.
 3. **The big USDT books.** There is no spread to earn. This is a rebate and queue-position business for later, with low-latency infrastructure.
-4. **USDCUSDT.** It is fee-free and the busiest book ($1.2B a day), but the spread is 0.1 bps and there is no rebate. Zero-fee volume has historically not counted towards VIP tiers. Use it for rebalancing, not as a making target.
+4. **USDCUSDT.** It is fee-free and the busiest book ($1.2B a day), but fills there were worth about zero and there is no rebate. Zero-fee volume has historically not counted towards VIP tiers. Use it for rebalancing, not as a making target.
 
 **Perps may be the cheaper place to make.** Your futures maker fee (0.02%) is a third of spot's. Perps also trade 4–12× spot's volume (7-day average: BTCUSDT $11.4B a day against $1.4B on spot; ETHUSDT $8.0B against $0.7B). And the futures liquidity-provider programme has paid rebates (up to 0.3 bps in its last published terms). The graph still supplies fair value: spot, plus the basis. The same markout method applies, but futures data is blocked from this sandbox, so it's a Phase 0 measurement from Tokyo.
 
@@ -490,11 +507,11 @@ The other USDT/USDC pairs look like BTCUSDT, within ±0.3 bps.
 
 **Mechanics**
 
-* **Orders.** Use post-only (`LIMIT_MAKER`) quotes around the graph fair value plus a margin, skewed by inventory. Cancel and replace when fair value moves; amend-keep-priority only reduces size. Set an STP mode.
+* **Orders.** Use post-only (`LIMIT_MAKER`) quotes around the USDT-based fair value plus a margin, skewed by inventory. Cancel and replace when fair value moves; amend-keep-priority only reduces size. Set an STP mode.
 * **Inventory.** Offload the net position through perps or the cheapest route once it leaves its band.
 * **Order budget.** The unfilled-order limits (§7) bind much harder here than for taker cycles, because every quote that doesn't fill counts. 100 per 10 s and 200,000 a day average out to about 2.3 new orders a second across all your quotes.
-  * In the quiet 30-minute sample, each cross pair's fair value moved 0.5 bps 8–23 times a minute, and 1 bps 3–8 times (`analyze_making.py`, re-quote load).
-  * Re-quoting both sides of all three cross pairs on every 0.5 bps move would take ~100 orders a minute (1.6/s); on 1 bps moves, ~36 a minute.
+  * In the quiet 30-minute sample, each cross pair's USDT-based fair value moved 0.5 bps 7–18 times a minute, and 1 bps 3–8 times (`analyze_making.py`, re-quote load).
+  * Re-quoting both sides of all three cross pairs on every 0.5 bps move would take ~84 orders a minute (1.4/s); on 1 bps moves, ~37 a minute.
   * Volatile days will be several times busier, so make the re-quote threshold adapt to the budget left. Quote few pairs.
   * The maker programme can bring higher limits; ask your account manager.
 
@@ -548,20 +565,43 @@ What it means:
 | Market making | Record spot books and `aggTrade`; realized spread per pair at 0 maker fee | Quoting engine in C++, in shadow on ETHBTC and BNBETH | Positive realized spread at a maker fee you can reach; a path into the maker programme |
 | Hedge and carry | Run `basis_funding.py` monthly; record perp streams from Tokyo | Hedge the working inventory with perps; carry when funding clears your threshold | Funding regime, and margin set-up |
 
+### 13.5 Fitting it to 15k AUD
+
+Your answers settle the scale: 15k AUD in total, roughly US$10k at ~0.65 USD per AUD. Three things follow from it.
+
+* **Perps may not be available to you at all.** If the account is Australian, retail clients generally can't trade Binance derivatives. ASIC cancelled Binance Australia Derivatives' licence in April 2023, and in 2026 a court penalised it A$10M for letting retail clients into derivatives. Wholesale clients still can, subject to the wholesale-client tests.
+  * Without perps, the carry trade, the perp hedges and perp market making (§13.2–§13.3) drop out.
+  * What remains is spot-only: taker cycles, spot making, and inventory kept small instead of hedged.
+  * Confirm your classification before building anything that needs futures.
+* **VIP 2 needs more than this account will have.** Binance's criteria require both ≥ $5M of 30-day spot volume and ≥ 25 BNB (about US$20k).
+  * Unless Binance offers you a trial or another route, plan on VIP 0 with the BNB discount: 0.075% maker and taker, or 0.075% / 0.07125% on USDC pairs.
+  * Only the maker rate differs from your VIP 2 numbers, and no conclusion here depends on it. Taker cycles never cleared even 5 bps per leg, and making needs a maker fee of zero either way.
+* **Portfolio margin probably isn't available yet.** Binance's last published requirement for regular users was 100,000 USDT across the cross-margin and futures wallets (April 2024). Without it, a perp hedge needs its own margin in the futures wallet: hedging $3k of coins at 3× leverage ties up about $1k more.
+
+What the capital is for, at this size:
+
+* **The edges measured so far are worth cents to a few dollars a day here.** The capital's main job is to fund Phase 0 and a careful start, not to earn yet. Keep most of it in stablecoins until a strategy passes its gate (§13.4).
+* **Taker cycles** need about US$500 of working inventory (~$100 per asset) plus a small BNB fee float.
+* **Making** stays in shadow until the maker fee is zero. The programme's ~$20M a month is about 2,000 turns of this whole book every month, so it only becomes reachable once a strategy is profitable per trade at your fees.
+* **Carry** is the one track that works at any size, but at last year's funding (~3% a year) it earns about A$25 a month per A$10k, if perps are available to you at all.
+
 ## 14. Decisions so far, and open questions
 
 Decided on 2026-10-04:
 
-* **Fees:** VIP 2, paid in BNB. 0.06% maker on all pairs. 0.075% taker on USDT and cross pairs, 0.07125% taker on USDC pairs. USDCUSDT free. Futures ≈ 0.02% / 0.05%.
-* **Inventory:** ~$100 per coin to start, grown only if Phase 0 shows larger opportunities.
+* **Fees (as you expect them):** VIP 2, paid in BNB. 0.06% maker on all pairs. 0.075% taker on USDT and cross pairs, 0.07125% taker on USDC pairs. USDCUSDT free. Futures ≈ 0.02% / 0.05%. See §13.5 for whether VIP 2 is reachable.
+* **Capital:** 15k AUD in total (§13.5). Start with ~$100 per coin of working inventory.
 * **Live engine:** C++ (§8.3). Python stays as the research tooling and reference implementation.
-* **Scope:** taker cycles, market making (working towards Binance's maker programme), and perps for both hedging and spot–perp basis (§13).
+* **Scope:** taker cycles, market making (working towards Binance's maker programme), and perps for hedging and spot–perp basis (§13), subject to futures access (§13.5).
+* **Fair value for making:** read from the USDT books (§13.1).
+* **Portfolio margin:** you plan to enable it; check eligibility (§13.5).
+* **Account manager:** once the account is approved, ask them about the maker programme's requirements.
 
 Open:
 
-1. **Capital for carry:** carry and hedging scale with capital, not speed. How much could go there if funding picks up?
-2. **Portfolio margin:** is it available on your account? It changes how much margin the perp legs tie up.
-3. **Account manager:** do you have one at Binance? Maker-programme entry and higher order-rate limits go through them.
+1. **Futures access:** is the account Australian, and if so, are you classified as a wholesale client? This decides whether the perps track exists at all.
+2. **VIP 2:** how do you expect to qualify (a trial, a referral offer)? Otherwise the plan assumes VIP 0 maker fees.
+3. **Phase 0:** when can the Tokyo recorder start? It's the next concrete step for every track.
 
 ## Appendix: research code
 
@@ -573,6 +613,7 @@ research/analyze_recording.py  replay a recording: update rates, spreads, net-po
 research/analyze_making.py     which pairs to make: hedged-at-once edge, quote edge vs graph fair value, realized spread
                                of real fills (--trades, an aggTrade recording)
 research/basis_funding.py      perp funding history and spot-perp basis from the public archive (data.binance.vision)
+research/compare_fair_values.py  which fair-value estimator to make markets off (own mid, route median, USDT, volume-weighted)
 research/test_arb_core.py      unit tests (python research/test_arb_core.py)
 ```
 
@@ -587,5 +628,6 @@ python analyze_recording.py --bookticker bt.jsonl.gz --depth d20.jsonl.gz \
 python record_streams.py --stream aggTrade --seconds 3600 --out tr.jsonl.gz   # alongside a bookTicker recording
 python analyze_making.py --bookticker bt.jsonl.gz --trades tr.jsonl.gz \
     --fees "7.5,USDCUSDT=0,BTCUSDC=7.125,ETHUSDC=7.125,BNBUSDC=7.125"
+python compare_fair_values.py --bookticker bt.jsonl.gz --trades tr.jsonl.gz
 python basis_funding.py --months 12 --days 7
 ```

@@ -99,15 +99,18 @@ def test_best_path_rate_skips_the_quoted_pair():
     assert math.isclose(best_path_rate("BTC", "USDT", tob, 0.0, exclude="BTCUSDC")[0], 100.0)
 
 
-def test_fair_value_is_robust_to_one_off_route():
-    from analyze_making import fair_values
+def test_fair_values():
+    from analyze_making import route_fair_values, usdt_fair_values
 
     px = {"BTCUSDT": 100.0, "ETHUSDT": 5.0, "BNBUSDT": 1.0, "USDCUSDT": 1.0, "BTCUSDC": 100.0,
           "ETHUSDC": 5.0, "BNBUSDC": 1.0, "ETHBTC": 0.05, "BNBBTC": 0.01, "BNBETH": 0.2}
     tob = {s: (p, p) for s, p in px.items()}
-    assert all(math.isclose(v, px[s]) for s, v in fair_values(tob).items())  # consistent market: fair = mid
+    for fair_values in (route_fair_values, usdt_fair_values):  # consistent market: fair = mid
+        assert all(math.isclose(v, px[s]) for s, v in fair_values(tob).items())
     tob["BTCUSDC"] = (101.0, 101.0)  # one route for BTCUSDT is now off by 1%
-    assert math.isclose(fair_values(tob)["BTCUSDT"], 100.0)  # the median of three routes ignores it
+    assert math.isclose(route_fair_values(tob)["BTCUSDT"], 100.0)  # the median of three routes ignores it
+    # USDT as the source of truth prices BTCUSDC off BTCUSDT and USDCUSDT, so it shows BTCUSDC 1% rich.
+    assert math.isclose(usdt_fair_values(tob)["BTCUSDC"], 100.0)
 
 
 if __name__ == "__main__":
