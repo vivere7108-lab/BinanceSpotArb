@@ -109,12 +109,13 @@ def replay_bookticker(path, cycles):
             ep = open_ep[f]
             if net > 0:
                 if ep is None:
-                    ep = open_ep[f] = {"start": t, "peak": -1.0}
+                    ep = open_ep[f] = {"start": t, "peak": -1.0, "opened_by": s}
                 if net > ep["peak"]:
                     ep.update(peak=net, cycle=cycles[i].path,
                               cap=touch_capacity_usdt(cycles[i], tob, qty, usdt_prices(mid)))
             elif ep is not None:
                 ep["ms"] = (t - ep["start"]) / 1e6
+                ep["closed_by"] = s
                 episodes[f].append(ep)
                 open_ep[f] = None
         t_prev = t
@@ -122,6 +123,7 @@ def replay_bookticker(path, cycles):
     for f, ep in open_ep.items():  # close episodes still open when the recording ends
         if ep is not None:
             ep["ms"] = (t_prev - ep["start"]) / 1e6
+            ep["closed_by"] = "(end of recording)"
             episodes[f].append(ep)
     span_s = (t_prev - t0) / 1e9
     return dict(span_s=span_s, msgs=msgs, per_second=per_second, spread_bps=spread_bps,
@@ -187,6 +189,19 @@ def report(bt, depth, cycles):
         else:
             dur, extra = "-", "- | - | -"
         print(f"| {f:g} | {3 * f:g} | {len(eps)} | {len(eps) / bt['span_s'] * 3600:.0f} | {frac:.3f} | {dur} | {extra} |")
+
+    for f in FEES_BPS:
+        eps = bt["episodes"][f]
+        if f == 0 or not eps:
+            continue  # at zero fees some cycle is positive almost all the time
+        print(f"\nWhich update opened and closed the net-positive episodes at {f:g} bps per leg:\n")
+        print("| opened by | closed by | episodes | median duration (ms) |")
+        print("|---|---|---:|---:|")
+        pairs = defaultdict(list)
+        for e in eps:
+            pairs[(e["opened_by"], e["closed_by"])].append(e["ms"])
+        for (o, c), ms in sorted(pairs.items(), key=lambda kv: -len(kv[1]))[:6]:
+            print(f"| {o} | {c} | {len(ms)} | {statistics.median(ms):.0f} |")
 
     print("\nCycles that came closest (gross edge at the touch, before fees):\n")
     print("| cycle | legs | max gross edge (bps) | % of time gross > 0 |")
