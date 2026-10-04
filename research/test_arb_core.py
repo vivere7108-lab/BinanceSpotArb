@@ -2,8 +2,8 @@
 import math
 from collections import Counter
 
-from arb_core import (Book, Cycle, best_route, enumerate_cycles, enumerate_paths, fill_path, hurdle, log_edge,
-                      make_leg, size_cycle)
+from arb_core import (Book, Cycle, best_path_rate, best_route, enumerate_cycles, enumerate_paths, fill_path, hurdle,
+                      log_edge, make_leg, size_cycle)
 
 
 def tri():
@@ -84,6 +84,30 @@ def test_per_symbol_fee_schedule():
     gross = log_edge(c, tob)
     assert math.isclose(log_edge(c, tob, fees), gross - hurdle(c, fees))
     assert gross > 0 and log_edge(c, tob, fees) > 0  # 20 bps gross clears the 14.6 bps hurdle
+
+
+def test_best_path_rate_skips_the_quoted_pair():
+    # A flat, consistent market (BTC 100, ETH 5, BNB 1, USDC 1 in USDT) with zero spreads,
+    # except that BTCUSDC bids 101: selling BTC via USDC is the best way into USDT.
+    px = {"BTCUSDT": 100.0, "ETHUSDT": 5.0, "BNBUSDT": 1.0, "USDCUSDT": 1.0, "BTCUSDC": 100.0,
+          "ETHUSDC": 5.0, "BNBUSDC": 1.0, "ETHBTC": 0.05, "BNBBTC": 0.01, "BNBETH": 0.2}
+    tob = {s: (p, p) for s, p in px.items()}
+    tob["BTCUSDC"] = (101.0, 101.0)
+    rate, legs = best_path_rate("BTC", "USDT", tob, 0.0, exclude="BTCUSDT")
+    assert math.isclose(rate, 101.0) and [leg.symbol for leg in legs] == ["BTCUSDC", "USDCUSDT"]
+    # With the direct pair allowed it still wins via USDC; excluding BTCUSDC falls back to 100.
+    assert math.isclose(best_path_rate("BTC", "USDT", tob, 0.0, exclude="BTCUSDC")[0], 100.0)
+
+
+def test_fair_value_is_robust_to_one_off_route():
+    from analyze_making import fair_values
+
+    px = {"BTCUSDT": 100.0, "ETHUSDT": 5.0, "BNBUSDT": 1.0, "USDCUSDT": 1.0, "BTCUSDC": 100.0,
+          "ETHUSDC": 5.0, "BNBUSDC": 1.0, "ETHBTC": 0.05, "BNBBTC": 0.01, "BNBETH": 0.2}
+    tob = {s: (p, p) for s, p in px.items()}
+    assert all(math.isclose(v, px[s]) for s, v in fair_values(tob).items())  # consistent market: fair = mid
+    tob["BTCUSDC"] = (101.0, 101.0)  # one route for BTCUSDT is now off by 1%
+    assert math.isclose(fair_values(tob)["BTCUSDT"], 100.0)  # the median of three routes ignores it
 
 
 if __name__ == "__main__":

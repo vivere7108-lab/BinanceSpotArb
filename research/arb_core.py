@@ -245,6 +245,25 @@ def fill_path(legs: tuple[Leg, ...], books: dict[str, Book], fee: Fee, amount: f
     return res
 
 
+def best_path_rate(src: str, dst: str, tob: dict[str, tuple[float, float]], fee: Fee,
+                   exclude: str | None = None, max_legs: int = 3) -> tuple[float, tuple[Leg, ...]]:
+    """Best top-of-book rate (dst per src, after taker fees) over simple paths, skipping ``exclude``.
+
+    For market making: the price a quote on symbol P is worth is what you could
+    flatten a fill for elsewhere in the graph, so call it with ``exclude=P``.
+    """
+    best: tuple[float, tuple[Leg, ...]] = (0.0, ())
+    for legs in enumerate_paths(src, dst, max_legs):
+        if any(leg.symbol == exclude for leg in legs):
+            continue
+        rate = 1.0
+        for leg in legs:
+            rate *= top_rate(leg, *tob[leg.symbol]) * (1.0 - leg_fee(fee, leg))
+        if rate > best[0] * (1 + 1e-12):  # paths come shortest first; on a tie keep fewer legs
+            best = (rate, legs)
+    return best
+
+
 def best_route(src: str, dst: str, amount: float, books: dict[str, Book], fee: Fee,
                max_legs: int = 4) -> tuple[tuple[Leg, ...], Sizing] | None:
     """The path that turns ``amount`` of ``src`` into the most ``dst`` (smart order routing)."""
