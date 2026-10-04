@@ -10,7 +10,7 @@ Draft v1, 2026-10-04. Assets: USDT, USDC, BTC, ETH, BNB on Binance spot.
 4. **Open paths between nodes are already covered by cycles.** Take any route from A to B, say USDT⇝BNB. If it beats the direct A→B conversion, then, to within that pair's spread, it is a profitable cycle closed by the direct leg back. Judging an open path against a mid price instead is a directional bet on B. Picking the cheapest route for a purchase you need anyway, such as topping up BNB, is routing, and it belongs in the treasury (§2.3).
 5. **Parallel execution means trading from inventory.** Hold working balances in every asset. Fire all legs at once as LIMIT IOC orders at the worst price the simulator touched. A rebalancer cleans up leg mismatches. This takes one round trip instead of one per leg. Send the contested leg (the quote most likely to vanish) first. If its misses prove expensive, fall back to sending the rest only after it fills (§5.1).
 6. **Trade size = min(depth-optimal size, packet cap, inventory per leg), then apply exchange filters.** "Depth-optimal" means walking all legs' books together until the marginal cycle rate falls to 1 plus a buffer. That is the right generalisation of "bottleneck volume" (§4.2).
-7. **Fees decide viability, so measure before building execution.** At VIP 0 paying fees in BNB, a 3-leg cycle needs more than 22.5 bps gross. In the live sample in §12, the best gross edge was about 10 bps and nothing cleared even 5 bps per leg. At 2 bps per leg, roughly top-VIP fees, there were a handful of windows of 5 ms or less, worth about $1 each. Phase 0 (§11) is a go/no-go measurement from Tokyo at your real commission rates.
+7. **Fees decide viability, so measure before building execution.** At VIP 0 paying fees in BNB, a 3-leg cycle needs more than 22.5 bps gross. In the live sample in §12, the best gross edge was about 10 bps and nothing cleared even 5 bps per leg. At 2 bps per leg, roughly top-VIP fees, there were five windows in 30 minutes, each 5 ms or less and worth about $1. Phase 0 (§11) is a go/no-go measurement from Tokyo at your real commission rates.
 8. **Your constraints, in the order they bind:**
    * **Fees** bind first, by a wide margin.
    * **Latency** is next: the opportunities that do appear last milliseconds.
@@ -30,16 +30,16 @@ All 10 symbols were `TRADING` in `exchangeInfo` on 2026-10-04. Tick and step val
 | BTCUSDC | 0.01 | 0.001 | 0.00001 BTC | 0.85 | 5 USDC | 0.00 |
 | ETHUSDC | 0.01 | 0.04 | 0.0001 ETH | 0.27 | 5 USDC | 0.04 |
 | BNBUSDC | 0.01 | 0.13 | 0.001 BNB | 0.80 | 5 USDC | 0.13 |
-| ETHBTC | 0.00001 | 3.15 | 0.0001 ETH | 0.27 | 0.0001 BTC (≈ 8.5 USD) | 3.16 |
-| BNBBTC | 0.000001 | 1.07 | 0.001 BNB | 0.80 | 0.0001 BTC (≈ 8.5 USD) | 1.07 |
-| BNBETH | 0.0001 | 3.40 | 0.001 BNB | 0.80 | 0.001 ETH (≈ 2.7 USD) | 3.40 |
+| ETHBTC | 0.00001 | 3.15 | 0.0001 ETH | 0.27 | 0.0001 BTC (≈ 8.5 USD) | 3.15 |
+| BNBBTC | 0.000001 | 1.07 | 0.001 BNB | 0.80 | 0.0001 BTC (≈ 8.5 USD) | 1.08 |
+| BNBETH | 0.0001 | 3.40 | 0.001 BNB | 0.80 | 0.001 ETH (≈ 2.7 USD) | 3.41 |
 
 **Cycle counts.** There are 20 three-leg, 30 four-leg and 24 five-leg directed cycles, 74 in total. Every symbol appears in 30 of them. Two-leg round trips on one symbol always lose the spread, so they are excluded.
 
 **Where gross edge comes from.** Two sources showed up in the sample (§12):
 
-1. **Tick-constrained cross pairs.** ETHBTC, BNBBTC and BNBETH have spreads pinned at one tick, worth 1–3.4 bps. They update 10–70× less often than BTCUSDT. Their mid can therefore sit about half a tick away from the cross price implied by the USDT legs. Example from 09:24 UTC: BNBETH's mid was 3.3 bps below the implied BNBUSDT/ETHUSDT cross, so USDT→ETH→BNB→USDT showed +1.5 bps gross at the touch.
-2. **A USDT/USDC basis on BNB.** For long stretches BNB was cheaper against USDC than against USDT. USDT→USDC→BNB→USDT reached +9.3 bps gross and was gross-positive 44% of the time.
+1. **Tick-constrained cross pairs.** ETHBTC, BNBBTC and BNBETH have spreads pinned at one tick, worth 1–3.4 bps. They update 30–55× less often than BTCUSDT. Their mid can therefore sit about half a tick away from the cross price implied by the USDT legs. Example from 09:24 UTC: BNBETH's mid was 3.3 bps below the implied BNBUSDT/ETHUSDT cross, so USDT→ETH→BNB→USDT showed +1.5 bps gross at the touch.
+2. **A USDT/USDC basis on BNB.** For long stretches BNB was cheaper against USDC than against USDT. USDT→USDC→BNB→USDT reached +9.3 bps gross and was gross-positive 40% of the time.
 
 Both sit far inside everyone's fee hurdle, which is why they persist. The tradable version is narrower. It is the few milliseconds when a better quote appears on one leg, or when a slow book lags after a liquid leg moves. That is a latency race (§8).
 
@@ -150,7 +150,7 @@ Start with a flat per-leg buffer (`min_edge`). Replace it with a fitted model on
 Recommendation: **parallel**, with the hybrid as a measured fallback.
 
 * Net-positive episodes in the sample lasted a median of a few milliseconds (§12). Sequential execution would reach legs 2–3 after most of them had closed.
-* The edge usually hinges on one *contested* quote, the one most likely to vanish. In the sample that was almost always a BNB quote, in one of two forms. Either a better quote on BNBUSDC or BNBUSDT appeared and vanished within ~5 ms, or a slow BNB cross quote (BNBETH, BNBBTC) was left behind after a liquid leg moved. The engine knows which update created the edge, so it knows which leg that is.
+* The edge usually hinges on one *contested* quote, the one most likely to vanish. In the sample that was almost always a BNB quote, in one of two forms. Either a better quote on BNBUSDC or BNBUSDT appeared and vanished within ~6 ms, or a slow BNB cross quote (BNBETH, BNBBTC) was left behind after a liquid leg moved. The engine knows which update created the edge, so it knows which leg that is.
 * So send the contested leg first. If its miss rate turns out high, switch to the hybrid: wait for that leg's fill before sending the rest. A parallel miss leaves drift that costs about two more fees and spreads to repair. A hybrid miss costs nothing but order budget.
 * Measure both in Phases 1–2.
 
@@ -202,7 +202,7 @@ Recommendation: let SBE `bestBidAsk` drive the screen, and keep local books from
 
 ### 6.3 Throughput and limits
 
-* The sample (§12) was a quiet Sunday, and BTCUSDT still burst to ~900 top-of-book updates in a single second. Volatile markets will be much higher. Size the decode→screen path for bursts, watch queue depth, and conflate to the latest top of book when behind.
+* The sample (§12) was a quiet Sunday, and BTCUSDT still burst to ~1,000 top-of-book updates in a single second. Volatile markets will be much higher. Size the decode→screen path for bursts, watch queue depth, and conflate to the latest top of book when behind.
 * Stream limits: 1,024 streams per connection, 300 connection attempts per 5 min per IP, 5 incoming control messages per second per connection, and 24 h connection lifetime. The server pings every 20 s.
 * Redundancy: run 2–3 identical connections, take whichever message arrives first, and dedupe by update id. This cuts tail latency.
 
@@ -283,29 +283,29 @@ Use the Spot Testnet (`testnet.binance.vision`) only for functional tests of ord
 
 Measured with `research/record_streams.py` and `research/analyze_recording.py` on JSON streams. **Caveats:** a quiet Sunday morning, measured from this sandbox rather than Tokyo, and a short window. Treat it as a sanity check, not as Phase 0.
 
-Window: 09:25–09:38 UTC (12.5 min), with 102,893 top-of-book updates and 42,937 depth20 snapshots across the 10 symbols. A separate 7-minute window just before (09:19–09:26) gave the same picture.
+Window: 09:25–09:55 UTC (30 min), with 237,965 top-of-book updates and 102,259 depth20 snapshots across the 10 symbols. A separate 7-minute window just before (09:19–09:26) gave the same picture.
 
 **Update rates and spreads**
 
 | Symbol | Updates/s (mean) | Busiest second | Median spread (bps) |
 |---|---:|---:|---:|
-| BTCUSDT | 62.3 | 866 | 0.00 |
-| ETHUSDT | 19.8 | 415 | 0.04 |
-| BNBUSDT | 16.7 | 322 | 0.13 |
-| USDCUSDT | 4.3 | 59 | 0.10 |
-| BTCUSDC | 15.1 | 243 | 0.00 |
-| ETHUSDC | 6.4 | 133 | 0.04 |
-| BNBUSDC | 8.3 | 75 | 0.13 |
-| ETHBTC | 1.5 | 32 | 3.16 |
-| BNBBTC | 2.2 | 116 | 1.07 |
-| BNBETH | 0.9 | 36 | 3.40 |
+| BTCUSDT | 55.5 | 990 | 0.00 |
+| ETHUSDT | 22.8 | 415 | 0.04 |
+| BNBUSDT | 18.2 | 322 | 0.13 |
+| USDCUSDT | 4.3 | 68 | 0.10 |
+| BTCUSDC | 12.3 | 243 | 0.00 |
+| ETHUSDC | 7.4 | 137 | 0.04 |
+| BNBUSDC | 7.3 | 87 | 0.13 |
+| ETHBTC | 1.6 | 71 | 3.15 |
+| BNBBTC | 1.9 | 116 | 1.08 |
+| BNBETH | 1.0 | 40 | 3.41 |
 
 **How often any cycle was net-positive at the touch** (top-of-book replay over all 74 cycles)
 
 | Fee per leg | 3-leg hurdle | Episodes | Per hour | % of time | Duration median / p90 / max (ms) | Median peak net edge (bps) | Median touch size (USDT) | Best cycle had 3 / 4 / 5 legs |
 |---:|---:|---:|---:|---:|---|---:|---:|---|
-| 1 bps | 3 bps | 23 | 111 | 4.6 | 8 / 5,413 / 13,795 | 0.37 | 585 | 14 / 9 / 0 |
-| 2 bps | 6 bps | 5 | 24 | 0.002 | 4 / 5 / 5 | 0.93 | 644 | 5 / 0 / 0 |
+| 1 bps | 3 bps | 81 | 162 | 2.4 | 7 / 214 / 13,795 | 0.39 | 434 | 68 / 13 / 0 |
+| 2 bps | 6 bps | 5 | 10 | 0.001 | 4 / 5 / 5 | 0.93 | 644 | 5 / 0 / 0 |
 | 5 bps | 15 bps | 0 | 0 | 0 | – | – | – | – |
 | **7.5 bps (VIP 0 + BNB)** | **22.5 bps** | **0** | 0 | 0 | – | – | – | – |
 | 10 bps | 30 bps | 0 | 0 | 0 | – | – | – | – |
@@ -316,11 +316,11 @@ With zero fees, some cycle was gross-positive for the whole window. The touch is
 
 | Fee per leg | Opened by | Closed by | Episodes | Median duration (ms) |
 |---|---|---|---:|---:|
-| 1 bps | BNBUSDC | BNBUSDC | 8 | 5 |
-| 1 bps | BNBUSDC | BNBETH | 2 | 4,117 |
-| 1 bps | BNBBTC | BNBBTC | 2 | 996 |
-| 1 bps | BNBUSDT | BNBBTC | 2 | 70 |
-| 1 bps | ETHUSDC | BNBUSDC | 2 | 6 |
+| 1 bps | BNBUSDC | BNBUSDC | 46 | 6 |
+| 1 bps | BNBUSDT | BNBBTC | 6 | 6 |
+| 1 bps | BNBUSDC | BNBETH | 5 | 214 |
+| 1 bps | BNBUSDC | BNBBTC | 4 | 5 |
+| 1 bps | BNBBTC | BNBBTC | 3 | 5 |
 | 2 bps | BNBUSDT | BNBUSDT | 3 | 0 |
 | 2 bps | BNBUSDT | BNBBTC | 1 | 4 |
 | 2 bps | BNBUSDC | BNBUSDC | 1 | 4 |
@@ -329,25 +329,26 @@ With zero fees, some cycle was gross-positive for the whole window. The touch is
 
 | Cycle | Legs | Max gross edge (bps) | % of time gross > 0 |
 |---|---:|---:|---:|
-| USDT→BTC→USDC→BNB→USDT | 4 | 9.96 | 70.5 |
-| USDT→ETH→USDC→BNB→USDT | 4 | 9.34 | 47.3 |
-| USDT→USDC→BNB→USDT | 3 | 9.31 | 44.0 |
-| USDT→BTC→ETH→USDC→BNB→USDT | 5 | 9.30 | 18.2 |
-| USDT→BTC→BNB→USDT | 3 | 9.07 | 56.6 |
-| USDT→ETH→BNB→USDT | 3 | 7.96 | 10.0 |
+| USDT→BTC→USDC→BNB→USDT | 4 | 9.96 | 74.5 |
+| USDT→ETH→USDC→BNB→USDT | 4 | 9.34 | 48.7 |
+| USDT→USDC→BNB→USDT | 3 | 9.31 | 39.7 |
+| USDT→BTC→ETH→USDC→BNB→USDT | 5 | 9.30 | 25.7 |
+| USDT→ETH→USDC→BTC→BNB→USDT | 5 | 9.21 | 26.0 |
+| USDT→BTC→BNB→USDT | 3 | 9.07 | 41.6 |
+| USDT→ETH→BNB→USDT | 3 | 7.96 | 10.8 |
 
 **Depth-optimal size and profit** (depth20 replay, `size_cycle` with no packet cap)
 
 | Fee per leg | Snapshots with a net-positive cycle | Optimal size median / p90 / max (USDT) | Profit median / p90 / max (USDT) |
 |---:|---:|---|---|
-| 1 bps | 2,146 (5.0%) | 1,392 / 29,625 / 38,126 | 0.06 / 0.96 / 6.18 |
-| 2 bps | 11 (0.03%) | 5,810 / 8,637 / 11,778 | 0.58 / 1.03 / 1.20 |
+| 1 bps | 2,709 (2.65%) | 944 / 28,035 / 48,992 | 0.03 / 0.68 / 6.74 |
+| 2 bps | 17 (0.02%) | 1,082 / 11,778 / 12,519 | 0.06 / 1.03 / 1.20 |
 | 5 bps and up | 0 | – | – |
 
 **What it means**
 
 * **At your likely fee (7.5 bps per leg), nothing came close.** The best gross edge, ~10 bps, is less than half the 22.5 bps three-leg hurdle.
-* **At 2 bps per leg the best case was tiny.** There were five windows of 5 ms or less in 12.5 minutes, each worth about $1 at full depth. Catching them takes both top-tier fees and sub-5 ms reaction.
+* **At 2 bps per leg the best case was tiny.** There were five windows of 5 ms or less in 30 minutes, all in the first 13, each worth about $1 at full depth. Catching them takes both top-tier fees and sub-5 ms reaction.
 * **Almost every episode involved BNB,** usually a better BNB quote that lived only a few milliseconds. The persistent USDT/USDC basis on BNB is the most interesting lead, and a natural subject for the maker-leg study (§5.5).
 * **This was a quiet Sunday morning, measured outside Tokyo.** Volatile periods produce larger and more frequent dislocations, and also more competition. Phase 0 exists to measure exactly that.
 
