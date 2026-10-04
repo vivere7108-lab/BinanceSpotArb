@@ -2,3 +2,4 @@ __pycache__/
 *.jsonl
 *.jsonl.gz
 .venv/
+archive_cache/

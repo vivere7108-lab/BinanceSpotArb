@@ -1,6 +1,6 @@
 # Binance spot cycle arbitrage: plan
 
-Draft v6, 2026-10-04: Phase 0 set-up for AWS Tokyo ([`ops/README.md`](ops/README.md)), an Australian spot-only account (§13.5), DEX–CEX (§15), making the long tail of spot pairs (§16). Assets: USDT, USDC, BTC, ETH, BNB on Binance spot.
+Draft v7, 2026-10-04: Phase 0 set-up for AWS Tokyo ([`ops/README.md`](ops/README.md)), an Australian spot-only account (§13.5), DEX–CEX (§15), making the long tail of spot pairs (§16) and pricing it off each coin's perp (§17). Assets: USDT, USDC, BTC, ETH, BNB on Binance spot.
 
 ## 0. Recommendations
 
@@ -26,6 +26,7 @@ Draft v6, 2026-10-04: Phase 0 set-up for AWS Tokyo ([`ops/README.md`](ops/README
     * In 36 minutes of live trades, though, the spread mostly paid for adverse selection. The average fill was worth about −1 bps after 60 s before fees, and −9 bps after a 7.5 bps maker fee.
     * The pairs that earned were mostly ones whose price never moved, which makes this short volatility.
     * Phase 0 now records all of them for a week to settle it (§16).
+14. **Price the long tail off each coin's own perpetual.** 61 of the 81 candidate coins have one, and it leads their spot book on every coin and day tested. Quoting only when the perp says the touch is ≥ 10 bps good lifted the realized spread from about 0 to 6–9 bps before fees, which is about break-even after a 7.5 bps maker fee; CYBER and BONK cleared it on all three days. BTC beta adds little once you have the perp. The book's queue sizes are the second signal (§17).
 
 ## 1. The graph
 
@@ -571,7 +572,7 @@ What it means:
 | Taker cycles | Record spot books from Tokyo; replay at your fees | C++ engine (§8.3, §11) | Episodes above ~15–17 bps that outlast your round-trip |
 | Market making | Record spot books and `aggTrade`; realized spread per pair at 0 maker fee | Quoting engine in C++, in shadow on ETHBTC and BNBETH | Positive realized spread at a maker fee you can reach; a path into the maker programme |
 | Hedge and carry | Run `basis_funding.py` monthly; record perp streams from Tokyo | Hedge the working inventory with perps; carry when funding clears your threshold | Funding regime, and margin set-up |
-| Long-tail making (§16) | Record the 87 wide-spread candidates from Tokyo; `markouts.py` per day | Queue-aware simulation, then a small live test | Positive realized spread after a 7.5 bps maker fee over a week, jumps included |
+| Long-tail making (§16–§17) | Record the 87 candidates and their 61 perps from Tokyo; `markouts.py` per day, `anchors.py` on the archive | Quoting off the perp and the queues; queue-aware simulation, then a small live test | Positive realized spread after a 7.5 bps maker fee over a week, jumps included |
 
 ### 13.5 Fitting it to 15k AUD
 
@@ -604,7 +605,7 @@ Decided on 2026-10-04:
 * **Capital:** 15k AUD in total (§13.5). Start with ~$100 per coin of working inventory.
 * **Live engine:** C++ (§8.3). Python stays as the research tooling and reference implementation.
 * **Scope:** taker cycles and spot market making, working towards Binance's maker programme (§13).
-* **Fair value for making:** read from the USDT books (§13.1).
+* **Fair value for making:** read from the USDT books (§13.1); for long-tail books, from each coin's perp (§17).
 * **Phase 0:** recorder on AWS Tokyo, set up with [`ops/README.md`](ops/README.md).
 * **Account manager:** once the account is approved, ask them about the maker programme's requirements.
 
@@ -732,11 +733,68 @@ The books not quoted in USDT, marked to their USDT anchor instead of their own m
 
 **Next**
 
+* **Fair value: each coin's perp (§17).** Quoting off it lifted the filtered fills to +6 to +9 bps before fees, about break-even after them.
 * **Record a week.** Phase 0 now records all 87 candidates (86 plus ZECBTC: `ops/recorders/spot-alts-*.env`). Run `markouts.py` on each day ([`ops/README.md`](ops/README.md) §11).
 * **The test for a pair:** a positive +60 s realized spread after a 7.5 bps maker fee across the week, over at least a few hundred trades and including the days its price jumped. For books with a USDT anchor, judge the filtered version.
 * **Then simulate the queue.** Your quote joins the back of its price level and fills only after the orders ahead of it have traded. On one-tick books that is most of the problem. After that, a small live test.
 * **The fee matters here too.** The busiest pairs earned −3 to +4 bps before fees, so a maker fee of zero or below would bring them to roughly break-even. Ask the account manager about Altcoin LiquidityBoost (§13.1), which pays rebates to makers on altcoin pairs.
 * **It adds to the short-volatility book.** Long-tail making earns while prices are still and loses when they jump, like the rest of the making in this plan. Size it with the rest of your short-volatility risk in mind, not as a diversifier.
+
+## 17. A fair-value web for the long tail
+
+You asked whether the long tail has a web to price against, like the triangles on the majors, or a factor model as in equities. There are three candidates, and they stack: the coin's own perpetual, its beta to BTC, and the book's own queues.
+
+Fundamentals (APT-style factors, cash flows, token unlocks) move over days to months. They can set a view or an inventory skew, not a quote. Equity market makers don't quote off DCF either: they quote off the index future or ETF, through each stock's beta, plus the order book. Here the coin's perp plays the index future's role.
+
+**1. The coin's own perpetual: the anchor.** 61 of the 81 candidate coins in §16 have a USDⓈ-M perp, trading 2–9× their spot volume.
+* You can't trade perps from an Australian retail account, but their market data is public, so a spot quote can still be priced off them.
+* `research/anchors.py` tests this on Binance's public archive: spot and perp trades with exchange timestamps, for 15 long-tail coins over 1–3 October 2026.
+
+| Day | Spot fills | Gap to the perp closed in 10 s: by spot / by perp | All fills, +60 s | Fills ≥ 10 bps better than the perp: share / +60 s | Same, after a 7.5 bps maker fee |
+|---|---:|---|---:|---|---:|
+| Thu 1 Oct | 131,692 | 3–38% / −2 to +1% | 0.0 | 29% / +7.8 | +0.3 |
+| Fri 2 Oct | 202,127 | 4–43% / −2 to +1% | +0.7 | 35% / +6.3 | −1.2 |
+| Sat 3 Oct | 65,861 | 2–14% / −1 to +1% | +2.4 | 38% / +9.3 | +1.8 |
+
+Realized spreads are in bps, notional-weighted, marked to the perp-implied price (the perp mid times the spot/perp ratio over the previous 5 minutes). Marking to the spot's own mid gives the same daily averages within 0.3 bps.
+
+* **The perp leads on every coin, every day.** Spot moves towards it; it doesn't move towards spot. The busiest coins follow fastest (PEPE, JASMY, BONK, NMR).
+* **Quoting only when the perp says the touch is good** keeps about a third of the fills and lifts their realized spread from 0–2 bps to 6–9 bps. It's the same effect as the USDT anchor on the cross pairs (§13.1), but on books with ten times the spread.
+* **After a 7.5 bps maker fee it's roughly break-even overall.** Two coins cleared the fee on all three days: CYBER (+5.4 to +9.0 bps after it) and BONK (+2.5 to +3.1). PEPE cleared it on two days.
+
+**2. The factor model: beta to BTC.** On 1-minute returns these coins have betas of 0.4–2.0 to BTC; the memecoins PEPE and BONK are about 1.9. BTC explains up to half of a busy coin's minute-to-minute variance.
+* But for the next 10 s of a spot book, the perp gap explains 1–19% of the variance, and BTC's last 10 s adds at most 1.5 points. The perp has already priced BTC in.
+* A beta model is the fallback for the 20 candidate coins with no perp (the fan tokens, AI, GLMR): BTC, ETH and a basket of same-sector perps as factors.
+
+**3. The book itself: who is queueing on which side.** The live recordings in §16 carry the size at the best bid and ask. Here the fills are bucketed by how much of the touch's size was on the maker's side 20 ms before the fill:
+
+| Maker's side of the touch | Fills | Share of notional | +60 s vs own mid (bps) |
+|---|---:|---:|---:|
+| 0–25% | 1,227 | 43% | −3.6 |
+| 25–50% | 753 | 31% | −4.8 |
+| 50–75% | 591 | 13% | +8.4 |
+| 75–100% | 396 | 13% | +7.1 |
+
+* Fills on the thin side of the touch (the side about to be cleared) lost money; fills on the thick side earned 7–8 bps. On one-tick books (PEPE, BONK, AI) this is the sub-tick fair value, the "microprice".
+* The catch is queue position. A quote that joins the back of a thick queue fills only once the queue ahead of it has traded, by which time its side is the thin one. Getting the good fills means joining a new price level as soon as it forms.
+
+**What it means**
+
+* **The web for the long tail is each coin's perp, with the book's queues on top.** BTC beta adds little where a perp exists.
+* **The perp moves the long tail from a loss to about break-even.** Fills lost 5–9 bps after fees (§16 and the all-fills column above); with the perp as fair value they come to about zero, and two coins are clearly positive.
+* **The fee decides the rest.** At a 5 bps maker fee the filtered fills are positive on all three days (+1.3 to +4.3 bps); at zero they make +6 to +9 bps on a third of the flow.
+* **Scale at your fees.** At a 5% share of the flow that passes the filter, CYBER and BONK are each worth roughly $5–45 a day after fees. At a zero maker fee, a 1% share of the filtered flow across these 15 coins would have earned about $190 on 2 October.
+* **Speed.** The perp's lead plays out over seconds, not microseconds: spot closes 2–43% of the gap in 10 s. A Tokyo box with millisecond latency can use it. Queue position on one-tick books is the part that rewards speed.
+
+**Next**
+
+* Phase 0 now also records the top of book of the 61 alt perps (`ops/recorders/perp-alts-bookticker.env`). That measures the lead on quotes, from Tokyo, alongside the spot books.
+* Run `anchors.py` on more days. It reads the public archive, so it needs no recorder. Keep CYBER and BONK as the first test pairs.
+* The quoting engine needs four inputs:
+  * the perp-implied price (perp mid × a 5-minute basis);
+  * the queue sizes on both sides of the touch;
+  * its own place in the queue;
+  * an order budget: re-quotes on perp moves count against 100 orders per 10 s.
 
 ## Appendix: research code
 
@@ -755,6 +813,8 @@ research/scan_spreads.py       every Binance spot pair: spreads wide enough for 
                                firms; prints the symbols to record for them
 research/markouts.py           realized spread of passive fills on any pairs, against their own mid and, where one exists,
                                a USDT anchor
+research/anchors.py            does a long-tail spot book follow its coin's perp or BTC? lead, R², and maker markouts
+                               filtered by the perp-implied price (one day of the public archive)
 ops/                           Phase 0 on AWS Tokyo: runbook, bootstrap, systemd recorders, hourly S3 upload, IAM policies
 research/test_arb_core.py      unit tests (python research/test_arb_core.py)
 ```
@@ -774,4 +834,5 @@ python compare_fair_values.py --bookticker bt.jsonl.gz --trades tr.jsonl.gz
 python basis_funding.py --months 12 --days 7
 python scan_spreads.py --top 100        # long-tail candidates and the symbols to record for them
 python markouts.py --bookticker alts_bt.jsonl.gz --trades alts_tr.jsonl.gz --maker-bps 7.5
+python anchors.py --day 2026-10-02 --coins PEPE,BONK,CYBER,JASMY,NMR
 ```

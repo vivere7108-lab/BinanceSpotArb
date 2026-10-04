@@ -113,6 +113,20 @@ def test_fair_values():
     assert math.isclose(usdt_fair_values(tob)["BTCUSDC"], 100.0)
 
 
+def test_archive_trades_and_trade_mids():
+    from anchors import at, mids, trades
+
+    # Spot archive rows carry microseconds and "True"; perp rows carry milliseconds and "false".
+    spot = trades([["1", "10.0", "2", "1", "1", "1700000000000000", "True", "True"]])
+    perp = trades([["1", "10.0", "2", "1", "1", "1700000000000", "false"]])
+    assert spot == [(1700000000000, 10.0, 2.0, True)] and perp == [(1700000000000, 10.0, 2.0, False)]
+    # A seller hits the bid at 9, a buyer lifts the ask at 11: mid 10. A later bid at 10 moves it to 10.5.
+    series = mids([(0, 9.0, 1.0, True), (100, 11.0, 1.0, False), (200, 10.0, 1.0, True)])
+    assert at(series, 50) is None and at(series, 150) == 10.0 and at(series, 250) == 10.5
+    # A side last seen more than 30 s ago doesn't make a mid.
+    assert mids([(0, 9.0, 1.0, True), (40_000, 11.0, 1.0, False)]) == ([], [])
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
