@@ -1,6 +1,6 @@
 # Binance spot cycle arbitrage: plan
 
-Draft v5, 2026-10-04: Phase 0 set-up for AWS Tokyo ([`ops/README.md`](ops/README.md)), an Australian spot-only account (§13.5), DEX–CEX (§15). Assets: USDT, USDC, BTC, ETH, BNB on Binance spot.
+Draft v6, 2026-10-04: Phase 0 set-up for AWS Tokyo ([`ops/README.md`](ops/README.md)), an Australian spot-only account (§13.5), DEX–CEX (§15), making the long tail of spot pairs (§16). Assets: USDT, USDC, BTC, ETH, BNB on Binance spot.
 
 ## 0. Recommendations
 
@@ -20,6 +20,12 @@ Draft v5, 2026-10-04: Phase 0 set-up for AWS Tokyo ([`ops/README.md`](ops/README
 10. **Market making: quote the slow cross pairs against fair value read from the USDT books, and get the maker fee to zero first.** Hedging each fill straight away through the graph never paid: the 7.1–7.5 bps taker hedge outweighs any spread here. Unhedged quotes at the touch need a maker fee of zero or less, and real fills on the cross pairs were often picked off by arbitrageurs. But fills where the quote was already ≥ 1 bps better than USDT-based fair value earned +1.9 to +2.6 bps on ETHBTC, BNBBTC and BNBETH. A maker that re-quotes off the USDT books keeps those and dodges the stale-quote losses. Reading fair value from USDT beat the median of routes in a direct comparison (§13.1). Build the quoting engine and run it in shadow now; go live once you're inside Binance's maker programme.
 11. **Perps: hedge first, carry second.** Over the last year a short perp against held coins earned funding rather than cost it. Cash-and-carry earned ~2.5–3.6% a year gross on BTC and ETH: slow and modest at current funding. Intraday basis trading doesn't pay at these fees, because the basis moves under 1 bps an hour (§13.2–§13.3).
 12. **DEX–CEX arbitrage: not on these assets at your fees.** PancakeSwap's deepest pools tracked Binance within 1–3 bps. In 10 minutes the best moment was still 4.3 bps short of covering your taker fee and the pool fee (§15).
+13. **Small capital's natural edge is the long tail of spot pairs, and it isn't proven yet.**
+    * 86 Binance pairs have spreads wider than two maker fees and $0.2–20M a day of volume.
+    * If your fills were 1% of their volume, each at the full half-spread, they would pay ~$320 a day: the "few hundred a day" scale.
+    * In 36 minutes of live trades, though, the spread mostly paid for adverse selection. The average fill was worth about −1 bps after 60 s before fees, and −9 bps after a 7.5 bps maker fee.
+    * The pairs that earned were mostly ones whose price never moved, which makes this short volatility.
+    * Phase 0 now records all of them for a week to settle it (§16).
 
 ## 1. The graph
 
@@ -565,6 +571,7 @@ What it means:
 | Taker cycles | Record spot books from Tokyo; replay at your fees | C++ engine (§8.3, §11) | Episodes above ~15–17 bps that outlast your round-trip |
 | Market making | Record spot books and `aggTrade`; realized spread per pair at 0 maker fee | Quoting engine in C++, in shadow on ETHBTC and BNBETH | Positive realized spread at a maker fee you can reach; a path into the maker programme |
 | Hedge and carry | Run `basis_funding.py` monthly; record perp streams from Tokyo | Hedge the working inventory with perps; carry when funding clears your threshold | Funding regime, and margin set-up |
+| Long-tail making (§16) | Record the 87 wide-spread candidates from Tokyo; `markouts.py` per day | Queue-aware simulation, then a small live test | Positive realized spread after a 7.5 bps maker fee over a week, jumps included |
 
 ### 13.5 Fitting it to 15k AUD
 
@@ -606,6 +613,7 @@ Open:
 1. **Wholesale status:** only matters if you want the perps track back. It's your call whether to pursue it.
 2. **API key:** once the account is approved, create an Ed25519 API key for later phases. Make it trade-only, with withdrawals disabled and access restricted to the trading instance's Elastic IP. Phase 0 doesn't need one.
 3. **DEX–CEX:** park it, or record it alongside Phase 0 (§15)?
+4. **The long tail:** Phase 0 now records the 87 wide-spread candidates. Decide after a week of markouts (§16).
 
 ## 15. DEX–CEX arbitrage
 
@@ -641,6 +649,95 @@ None of the 388 samples was profitable. Gas is negligible on BNB Chain, about 0.
 
 To keep the door open at no cost, run `dex_probe.py` from the Tokyo box for an hour or two during busy trading. Look again only if the gaps clear ~10 bps.
 
+## 16. The long tail: where small capital might have the edge
+
+**The thesis, and why nothing so far fitted it.** A strategy that can't net more than a few hundred dollars a day is worthless to a large firm and very attractive at 15k AUD. Edges like that live in markets too small to be worth a big firm's time. Everything tested in §12–§15 was the other kind. On the majors, the prize goes to whoever is fastest and pays the least in fees, whatever their capital, which is why none of it cleared VIP 0 fees. On Binance, the small-market version is making the long tail of spot pairs.
+
+**The scan** (`research/scan_spreads.py`, 2026-10-04 15:03 UTC, six snapshots of every book 10 s apart). Of 1,372 trading spot pairs, 86 had a median spread above 15 bps (two VIP 0 maker fees) and $0.2–20M of daily volume.
+
+* **5 can be priced off a USDT book.** They are books quoted in USDC, FDUSD or BTC, whose coin also trades on a USDT book with at least 10× the volume and at most a third of the spread: BEAMXUSDC, MUBARAKUSDC, TRXBTC, SUIFDUSD and 牛来USDC. That USDT book can price them, as it prices the cross pairs (§13.1).
+  * The list moves with the snapshots. A scan a few minutes earlier also had ZECBTC: 30 bps wide, $2.4M a day, priced off ZECUSDT at 0.1 bps and $105M a day.
+* **81 have only their own mid.** Many of their spreads are a single tick: PEPE (23.3 bps), BONK (26.1), AI (49.4), METIS (29.8). On those books the price can't improve, so makers compete on queue position, and a newcomer joins the back of the queue.
+* **6 are sports fan tokens** (ACM, JUV, PSG, CITY, ATM, ALPINE). Their flow may come mostly from fans rather than traders, which is the kind a maker wants.
+
+**What they could be worth, at most.** Suppose a maker's fills were 1% of each pair's volume, and each fill earned half the quoted spread less a 7.5 bps maker fee. The 86 pairs together would then pay about **$320 a day**. That's the "few hundred a day" scale, but only as a ceiling: it assumes no adverse selection.
+
+| Pair | Median spread (bps) | 24 h volume | Fair value from | Ceiling at 1% of volume ($/day) |
+|---|---:|---:|---|---:|
+| PEPEUSDT | 23.3 | $11.6M | own mid | 48 |
+| IOTAUSDT | 24.6 | $5.5M | own mid | 26 |
+| GLMRUSDT | 17.9 | $12.1M | own mid | 18 |
+| AIUSDT | 49.6 | $0.9M | own mid | 16 |
+| QIUSDT | 26.9 | $2.6M | own mid | 15 |
+| BONKUSDT | 26.1 | $2.3M | own mid | 13 |
+| GUNUSDT | 29.5 | $1.7M | own mid | 12 |
+| ALPINEUSDT | 27.5 | $1.8M | own mid | 11 |
+| PARTIUSDT | 36.3 | $1.0M | own mid | 11 |
+| BANKUSDT | 35.0 | $1.0M | own mid | 10 |
+| BEAMXUSDC | 45.2 | $0.4M | BEAMXUSDT (3.8 bps, $16.6M) | 6 |
+| MUBARAKUSDC | 27.1 | $0.6M | MUBARAKUSDT (4.6 bps, $13.0M) | 3 |
+| TRXBTC | 25.4 | $0.5M | TRXUSDT (3.0 bps, $13.9M) | 3 |
+
+**What makers actually earned** (`research/markouts.py`). For every trade, the passive side is credited the move from the trade price to the pair's mid 1 s, 10 s and 60 s later, notional-weighted. That is what a maker filled in that trade made before fees, if it could unwind at the mid. It flatters a newcomer, who sits at the back of the queue and tends to be filled only when a price level is cleared. Two live recordings on Sunday 2026-10-04, from this sandbox:
+
+| Recording | Pairs | Trades | Fills (USDT) | At fill | +1 s | +60 s | +60 s after a 7.5 bps maker fee |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 14:34–14:49 UTC | 14 | 606 | $349k | +11.6 | −5.0 | −4.9 | −12.4 |
+| 14:58–15:19 UTC | 25 | 2,361 | $732k | +12.1 | −0.4 | +0.7 | −6.8 |
+
+The second recording, pair by pair (bps; the last column is how far the mid moved over the 21 minutes):
+
+| Pair | Trades | Fills (USDT) | At fill | +60 s | After fee | Price move |
+|---|---:|---:|---:|---:|---:|---:|
+| PEPEUSDT | 326 | 310k | +10.8 | −2.1 | −9.6 | +23 |
+| IOTAUSDT | 366 | 167k | +9.6 | +4.4 | −3.1 | −163 |
+| GLMRUSDT | 538 | 50k | +20.6 | −1.8 | −9.3 | −53 |
+| BONKUSDT | 273 | 40k | +12.8 | −0.4 | −7.9 | +52 |
+| WLFIUSDT | 41 | 38k | +9.0 | −3.0 | −10.5 | 0 |
+| BANKUSDT | 98 | 23k | +16.9 | −2.8 | −10.3 | +35 |
+| MUBARAKUSDC | 72 | 16k | +10.6 | +26.4 | +18.9 | +119 |
+| ILVUSDT | 75 | 14k | +16.7 | +6.6 | −0.9 | −48 |
+| STXBTC | 24 | 6.6k | +9.6 | −17.4 | −24.9 | +177 |
+| AIUSDT | 29 | 5.4k | +47.5 | +46.5 | +39.0 | −25 (half a tick) |
+| ZECBTC | 34 | 4.8k | +4.3 | −7.4 | −14.9 | +39 |
+| ACMUSDT | 35 | 1.4k | +35.4 | +35.4 | +27.9 | 0 |
+| PSGUSDT | 60 | 1.1k | +21.6 | +21.7 | +14.2 | 0 |
+| ADXUSDT | 37 | 1.1k | +15.1 | +15.1 | +7.6 | 0 |
+
+The books not quoted in USDT, marked to their USDT anchor instead of their own mid (second recording; TRXBTC traded once and is left out):
+
+| Pair | Trades | Fills (USDT) | All fills, +60 s | Fills ≥ 5 bps better than the anchor: share / +60 s |
+|---|---:|---:|---:|---|
+| MUBARAKUSDC | 72 | 15.7k | +27.3 | 73% / +42.7 |
+| PEPEUSDC | 64 | 12.4k | −5.9 | 79% / −7.5 |
+| IOTAUSDC | 34 | 8.0k | +1.1 | 92% / +1.7 |
+| STXBTC | 24 | 6.6k | −17.0 | 72% / −12.6 |
+| ZECBTC | 34 | 4.8k | −11.3 | none; only 6% were even ≥ 0 bps better, at −15.6 |
+| BEAMXUSDC | 15 | 1.9k | +31.6 | 94% / +33.0 |
+| ESPUSDC | 14 | 0.8k | −1.6 | 30% / −0.0 |
+| **All, before fees** | 258 | 50.2k | +5.1 | 71% / +12.0 |
+| **All but MUBARAKUSDC, before fees** | 186 | 34.5k | −4.9 | 70% / −2.6 |
+
+**What it means**
+
+* **The spread mostly pays for adverse selection.** At the moment of the fill, the passive side was up about half the spread (+12 bps). Within a second it was gone. Across both recordings the average fill was worth about −1 bps after 60 s before fees, and about −9 bps after a 7.5 bps maker fee. On the busiest pairs (PEPE, GLMR, BONK, BANK, WLFI) fills lost money even before fees, or made at most 4 bps (IOTA), so every one of them lost after fees.
+* **The pairs that earned mostly had prices that never moved.** ACM, PSG and ADX ended the window at the mid they started at, so both sides of the book earned the full half-spread: +15 to +35 bps before fees. (AI moved half a tick. JUV and WLFI also ended where they started but lost after fees, so stillness isn't enough.)
+  * That is short volatility: a maker collects the half-spread while nothing happens and is left holding inventory when the price jumps. A fan token reprices on a match result. Twenty quiet minutes show the premium, not the jumps.
+  * It is also small: ACM, PSG and ADX traded $70–100k a day each at this window's pace.
+* **The USDT anchor helped only where it knows more than the book does.**
+  * ZECUSDT is a sharp anchor (0.1 bps wide, $105M a day). But 94% of ZECBTC's trading (by notional) was at prices already stale against it: arbitrageurs picking off old quotes, as on BNBBTC (§13.1). A maker re-quoting off ZECUSDT would have dodged them and been left with almost nothing to fill.
+  * PEPEUSDC's anchor, PEPEUSDT, is an equally coarse one-tick book, so it adds nothing. The filter kept 79% of fills at every threshold, and they lost 7.5 bps.
+  * MUBARAKUSDC made money on every measure, during a 120 bps rally on its anchor. Without it, the anchored books lost 3–5 bps per fill before fees, filtered or not. One pair in one window isn't an edge, but it is the first pair to watch.
+* **Scale.** The ceiling was ~$320 a day across all 86 pairs. In practice, a VIP 0 maker would have lost money on the average fill. If an edge shows up here, it will be a handful of quiet pairs worth tens of dollars a day each, with jump risk attached.
+
+**Next**
+
+* **Record a week.** Phase 0 now records all 87 candidates (86 plus ZECBTC: `ops/recorders/spot-alts-*.env`). Run `markouts.py` on each day ([`ops/README.md`](ops/README.md) §11).
+* **The test for a pair:** a positive +60 s realized spread after a 7.5 bps maker fee across the week, over at least a few hundred trades and including the days its price jumped. For books with a USDT anchor, judge the filtered version.
+* **Then simulate the queue.** Your quote joins the back of its price level and fills only after the orders ahead of it have traded. On one-tick books that is most of the problem. After that, a small live test.
+* **The fee matters here too.** The busiest pairs earned −3 to +4 bps before fees, so a maker fee of zero or below would bring them to roughly break-even. Ask the account manager about Altcoin LiquidityBoost (§13.1), which pays rebates to makers on altcoin pairs.
+* **It adds to the short-volatility book.** Long-tail making earns while prices are still and loses when they jump, like the rest of the making in this plan. Size it with the rest of your short-volatility risk in mind, not as a diversifier.
+
 ## Appendix: research code
 
 ```
@@ -654,6 +751,10 @@ research/basis_funding.py      perp funding history and spot-perp basis from the
 research/compare_fair_values.py  which fair-value estimator to make markets off (own mid, route median, USDT, volume-weighted)
 research/latency_probe.py      REST, WebSocket API and market-data latency from the box it runs on (pick the Tokyo AZ)
 research/dex_probe.py          PancakeSwap v3 (BNB Chain) prices vs Binance top of book, after pool fee, taker fee and gas
+research/scan_spreads.py       every Binance spot pair: spreads wide enough for a retail maker, in markets too small for big
+                               firms; prints the symbols to record for them
+research/markouts.py           realized spread of passive fills on any pairs, against their own mid and, where one exists,
+                               a USDT anchor
 ops/                           Phase 0 on AWS Tokyo: runbook, bootstrap, systemd recorders, hourly S3 upload, IAM policies
 research/test_arb_core.py      unit tests (python research/test_arb_core.py)
 ```
@@ -671,4 +772,6 @@ python analyze_making.py --bookticker bt.jsonl.gz --trades tr.jsonl.gz \
     --fees "7.5,USDCUSDT=0,BTCUSDC=7.125,ETHUSDC=7.125,BNBUSDC=7.125"
 python compare_fair_values.py --bookticker bt.jsonl.gz --trades tr.jsonl.gz
 python basis_funding.py --months 12 --days 7
+python scan_spreads.py --top 100        # long-tail candidates and the symbols to record for them
+python markouts.py --bookticker alts_bt.jsonl.gz --trades alts_tr.jsonl.gz --maker-bps 7.5
 ```

@@ -7,5 +7,6 @@ Cycle arbitrage on Binance spot across USDT, USDC, BTC, ETH and BNB.
   * record and replay live order books;
   * rank pairs for market making, and compare fair-value estimators (USDT as source of truth won);
   * measure perp funding and spot–perp basis from Binance's public archive;
-  * measure latency to Binance per AWS zone, and probe DEX (PancakeSwap) vs Binance prices.
+  * measure latency to Binance per AWS zone, and probe DEX (PancakeSwap) vs Binance prices;
+  * scan every spot pair for spreads a small maker could earn, and measure what makers actually earned there (realized spread against the pair's own mid or a USDT anchor).
 * [`ops/`](ops/): Phase 0 on AWS Tokyo. A step-by-step runbook plus scripts that record the streams around the clock and ship each finished day to S3.

@@ -2,13 +2,16 @@
 
 What this sets up:
 
-* **One EC2 instance in ap-northeast-1.** It records six Binance streams around the clock (top of book, depth and trades for the 10 spot pairs; top of book, mark price/funding and trades for the 6 perps). It writes one gzip file per stream per UTC day under `/data/live`.
+* **One EC2 instance in ap-northeast-1.** It records eight Binance streams around the clock and writes one gzip file per stream per UTC day under `/data/live`:
+  * top of book, depth and trades for the 10 spot pairs;
+  * top of book, mark price/funding and trades for the 6 perps;
+  * top of book and trades for the 87 wide-spread alt pairs found by `research/scan_spreads.py`, plus the USDT books that price them (PLAN.md §16).
 * **One S3 bucket in the same region.** Every hour, finished days are moved there under `phase0/<stream>/<day>/`, so the instance's disk stays small.
 * **No inbound ports.** You connect through AWS Systems Manager Session Manager (browser shell), and the instance reaches S3 through an IAM role, so no SSH keys or access keys sit on the box.
 
 Perps are recorded even though an Australian retail account may not be able to trade them (PLAN.md §13.5). Their public data is free to record, and perps carry most of the volume, so they are a candidate source of fair value for spot (§13.1).
 
-Rough data volume: on a quiet Sunday the three spot streams came to ~0.4 GB a day compressed (depth 0.24, top of book 0.16, trades 0.04). Perps will add several times that, so expect roughly 1–3 GB a day, more on busy days. Check the AWS pricing pages for current rates; a medium Graviton instance plus storage is in the tens of US dollars a month.
+Rough data volume: on a quiet Sunday the three spot streams came to ~0.4 GB a day compressed (depth 0.24, top of book 0.16, trades 0.04). The alt top of book adds ~0.7 GB a day, mostly from the busy USDT books that price the alt pairs. Perps will add several times the spot streams, so expect roughly 2–4 GB a day, more on busy days. Check the AWS pricing pages for current rates; a medium Graviton instance plus storage is in the tens of US dollars a month.
 
 ## 1. Account basics (once)
 
@@ -163,6 +166,12 @@ python analyze_recording.py --bookticker ../day/spot-bookticker-2026-10-05.jsonl
 python analyze_making.py --bookticker ../day/spot-bookticker-2026-10-05.jsonl.gz --trades ../day/spot-aggtrade-2026-10-05.jsonl.gz \
     --fees "7.5,USDCUSDT=0,BTCUSDC=7.125,ETHUSDC=7.125,BNBUSDC=7.125"
 python compare_fair_values.py --bookticker ../day/spot-bookticker-2026-10-05.jsonl.gz --trades ../day/spot-aggtrade-2026-10-05.jsonl.gz
+```
+
+For the alt candidates (PLAN.md §16), download `spot-alts-bookticker` and `spot-alts-aggtrade` the same way, then:
+
+```bash
+python markouts.py --bookticker ../day/spot-alts-bookticker-2026-10-05.jsonl.gz --trades ../day/spot-alts-aggtrade-2026-10-05.jsonl.gz --maker-bps 7.5
 ```
 
 If a recorder restarted during the day there will also be numbered files (`…-2026-10-05.1.jsonl.gz`); analyse them separately or concatenate them in order (`cat a.gz b.gz > day.gz` gives a valid gzip). A whole day takes a while in Python (roughly an hour for the depth replay). Start with `analyze_recording.py` without `--depth`.
