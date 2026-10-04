@@ -17,7 +17,7 @@ Draft v3, 2026-10-04: adds market making, perps and spot–perp basis (§13) to 
    * **The order-rate limit** binds only through misses, since filled orders don't count against it.
    * **Streaming rate and simulation time** are engineering work at the µs level, not limits (§6, §8).
 9. **Expect cents per trade at $100 packets.** 5 bps net on $100 is $0.05. Profit must come from frequency, so Phase 0 should count opportunities per day above your hurdle, not just whether any exist. Grow inventory only if it finds size worth taking (§5.2).
-10. **Market making: quote the slow cross pairs against the graph's fair value, and get the maker fee to zero first.** Hedging each fill straight away through the graph never paid: the 7.1–7.5 bps taker hedge outweighs any spread here. Unhedged quotes at the touch need a maker fee of zero or less, and real fills on the cross pairs were often picked off by arbitrageurs. But fills where the quote was already ≥ 1 bps better than the graph's fair value earned +1.8 to +2.7 bps on ETHBTC, BNBBTC and BNBETH. A maker that re-quotes off the graph keeps those and dodges the stale-quote losses (§13.1). Build the quoting engine and run it in shadow now; go live once you're inside Binance's maker programme.
+10. **Market making: quote the slow cross pairs against the graph's fair value, and get the maker fee to zero first.** Hedging each fill straight away through the graph never paid: the 7.1–7.5 bps taker hedge outweighs any spread here. Unhedged quotes at the touch need a maker fee of zero or less, and real fills on the cross pairs were often picked off by arbitrageurs. But fills where the quote was already ≥ 1 bps better than the graph's fair value earned +1.7 to +2.7 bps on ETHBTC, BNBBTC and BNBETH. A maker that re-quotes off the graph keeps those and dodges the stale-quote losses (§13.1). Build the quoting engine and run it in shadow now; go live once you're inside Binance's maker programme.
 11. **Perps: hedge first, carry second.** Over the last year a short perp against held coins earned funding rather than cost it. Cash-and-carry earned ~2.5–3.6% a year gross on BTC and ETH: slow and modest at current funding. Intraday basis trading doesn't pay at these fees, because the basis moves under 1 bps an hour (§13.2–§13.3).
 
 ## 1. The graph
@@ -452,30 +452,31 @@ You've put three more things in scope: making markets (working towards a maker r
 
 The other USDT/USDC pairs look like BTCUSDT, within ±0.3 bps.
 
-**What makers actually earned: the realized spread of real fills.** A separate recording of trades and top-of-book, 10:32–10:41 UTC (9 minutes, ~9,800 trades). For each trade, this is the passive side's P&L against the graph's fair value 10 s later, notional-weighted, before maker fees (`analyze_making.py --trades`):
+**What makers actually earned: the realized spread of real fills.** A separate recording of trades and top-of-book, 10:32–10:52 UTC (20 minutes, ~18,700 aggregated trades). For each trade, this is the passive side's P&L against the graph's fair value 10 s later, notional-weighted, before maker fees (`analyze_making.py --trades`):
 
-| Pair | Fill notional (9 min) | All fills, +10 s (bps) | Only fills ≥ 1 bps better than fair: share kept / +10 s (bps) |
+| Pair | Fill notional (20 min) | All fills, +10 s (bps) | Only fills ≥ 1 bps better than fair: share kept / +10 s (bps) |
 |---|---:|---:|---|
-| ETHBTC | $151k | +1.25 | 40% / +2.32 |
-| BNBBTC | $112k | −1.56 | 24% / +2.70 |
-| BNBETH | $43k | −1.94 | 28% / +1.79 |
-| BNBUSDC | $204k | −2.37 | 10% / +0.03 |
-| BTCUSDC | $1.13M | −0.61 | 21% / +0.88 |
-| BTCUSDT | $4.47M | −0.55 | 21% / +0.25 |
-| ETHUSDT | $1.69M | −0.33 | 20% / −0.67 |
-| ETHUSDC | $210k | −0.99 | 27% / −0.83 |
-| BNBUSDT | $440k | −0.97 | 45% / −0.17 |
-| USDCUSDT | $12.1M | −0.04 | 0%; at ≥ 0 bps: 40% / +0.45 |
+| ETHBTC | $186k | +1.18 | 37% / +2.33 |
+| BNBBTC | $133k | −1.39 | 26% / +2.69 |
+| BNBETH | $54k | −1.45 | 34% / +1.74 |
+| BNBUSDC | $263k | −2.13 | 12% / +0.47 |
+| BNBUSDT | $814k | −0.75 | 40% / +0.21 |
+| BTCUSDC | $2.19M | −0.93 | 26% / −0.01 |
+| BTCUSDT | $8.51M | −0.76 | 30% / −0.66 |
+| ETHUSDT | $2.69M | −0.83 | 15% / −0.52 |
+| ETHUSDC | $524k | −1.71 | 13% / −0.79 |
+| USDCUSDT | $28.9M | −0.12 | 0%; at ≥ 0 bps: 34% / +0.51 |
 
-* **The average maker at the touch lost money to informed flow.** On most pairs a passive fill was worth −0.3 to −2.4 bps ten seconds later, before fees. On BNBBTC, BNBETH and BNBUSDC the loss was there at the moment of the fill: those trades are mostly arbitrageurs picking off stale quotes, the same flow the taker-cycle engine would be part of.
-* **Quoting off the graph keeps the good fills.** Fills where the quote was already at least 1 bps better than fair value earned +1.8 to +2.7 bps on the cross pairs, on a quarter to 40% of their flow. That is the case for making those pairs: re-quote from the graph's fair value and never be the stale quote.
-* **USDCUSDT is already fee-free for you.** Fills on the right side of fair value earned +0.45 bps, but the book is very deep at each price, so queue position decides whether you'd get those fills at all.
-* **None of this survives a 6 bps maker fee.** At 0 (the maker programme), graph-aware making on ETHBTC, BNBBTC and BNBETH looks positive before queue effects. The cross pairs had only 25–103 trades in the window, so treat these as directions for Phase 0 to measure, not estimates.
+* **The average maker at the touch lost money to informed flow.** On every pair but ETHBTC, a passive fill was worth −0.1 to −2.1 bps ten seconds later, before fees. On BNBBTC and BNBUSDC the loss was there at the moment of the fill: those trades are mostly arbitrageurs picking off stale quotes, the same flow the taker-cycle engine would be part of.
+* **Quoting off the graph keeps the good fills.** Fills where the quote was already at least 1 bps better than fair value earned +1.7 to +2.7 bps on the three cross pairs, on 26–37% of their flow. That is the case for making those pairs: re-quote from the graph's fair value and never be the stale quote.
+* **The same filter barely helps on the big books.** Graph-aware fills on the USDT and USDC majors earned −0.8 to +0.5 bps; there, informed flow is faster than any fair value derived from the other books.
+* **USDCUSDT is already fee-free for you.** Fills on the right side of fair value earned +0.51 bps, but the book is very deep at each price, so queue position decides whether you'd get those fills at all.
+* **None of this survives a 6 bps maker fee.** At 0 (the maker programme), graph-aware making on ETHBTC, BNBBTC and BNBETH looks positive before queue effects. The cross pairs had only 37–255 trades in the window, so treat these as directions for Phase 0 to measure, not estimates.
 
 **Ranking for v1 making**
 
-1. **ETHBTC, BNBBTC and BNBETH.** One-tick spreads worth 1–3.4 bps, slow quotes, and a fair value visible elsewhere. Graph-aware fills there earned +1.8 to +2.7 bps. They are small markets ($7–14M a day), so capacity is limited.
-2. **The USDC books, against their USDT twins** (BTCUSDC, ETHUSDC, BNBUSDC). Little spread to earn, but the USDT book gives a sharp fair value and USDCUSDT makes inventory moves free.
+1. **ETHBTC, BNBBTC and BNBETH.** One-tick spreads worth 1–3.4 bps, slow quotes, and a fair value visible elsewhere. Graph-aware fills there earned +1.7 to +2.7 bps. They are small markets ($7–14M a day), so capacity is limited.
+2. **The USDC books, against their USDT twins** (BTCUSDC, ETHUSDC, BNBUSDC). The USDT book gives a sharp fair value and USDCUSDT makes inventory moves free. But there is little spread to earn, and graph-aware fills earned about zero (−0.8 to +0.5 bps), so this only works with a rebate.
 3. **The big USDT books.** There is no spread to earn. This is a rebate and queue-position business for later, with low-latency infrastructure.
 4. **USDCUSDT.** It is fee-free and the busiest book ($1.2B a day), but the spread is 0.1 bps and there is no rebate. Zero-fee volume has historically not counted towards VIP tiers. Use it for rebalancing, not as a making target.
 
