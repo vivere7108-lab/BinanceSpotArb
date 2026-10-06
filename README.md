@@ -5,8 +5,8 @@
 > source of truth for every line's state. Open here: long-tail spot making priced off each coin's perp
 > (phase 0 recording, `PLAN.md` §16–17). Closed at the owner's fees: taker cycles, DEX–CEX, intraday
 > basis. Blocked by regulation (Australian retail, spot only): cash-and-carry, perp hedges, perp making;
-> perp making was also measured negative in BinanceMarketMaking, which merges into this repo as
-> `perps/`. The default branch is `claude/great-dijkstra-n3wu1n` and the Tokyo runbook clones it by
+> perp making was also negative in BinanceMarketMaking's simulated fills on 2024 archive data
+> (selected fills lose 0.85–0.93 bp); that repo merges into this one as `perps/`. The default branch is `claude/great-dijkstra-n3wu1n` and the Tokyo runbook clones it by
 > name: do not delete it until `main` exists and the box is confirmed on it (`MAP.md` §10). Whether the
 > Tokyo instance exists is not yet written anywhere; a `STATUS.md` here should say so in its first line.
 
