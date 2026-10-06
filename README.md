@@ -1,5 +1,15 @@
 # BinanceSpotArb
 
+> **Status 2026-10-06: the crypto lab.** Registered in
+> [Wealth-Optimiser](https://github.com/vivere7108-lab/Wealth-Optimiser)'s `MAP.md`, which is the single
+> source of truth for every line's state. Open here: long-tail spot making priced off each coin's perp
+> (phase 0 recording, `PLAN.md` §16–17). Closed at the owner's fees: taker cycles, DEX–CEX, intraday
+> basis. Blocked by regulation (Australian retail, spot only): cash-and-carry, perp hedges, perp making;
+> perp making was also measured negative in BinanceMarketMaking, which merges into this repo as
+> `perps/`. The default branch is `claude/great-dijkstra-n3wu1n` and the Tokyo runbook clones it by
+> name: do not delete it until `main` exists and the box is confirmed on it (`MAP.md` §10). Whether the
+> Tokyo instance exists is not yet written anywhere; a `STATUS.md` here should say so in its first line.
+
 Cycle arbitrage on Binance spot across USDT, USDC, BTC, ETH and BNB.
 
 * [PLAN.md](PLAN.md): the design plan. Covers the home-node question, fees, depth-aware sizing, parallel execution, market data, rate limits, latency from Tokyo, risk controls and a phased build with a go/no-go gate.
