@@ -1,4 +1,14 @@
-# BinanceMarketMaking
+# perps (formerly the BinanceMarketMaking repository)
+
+> **Merged into BinanceSpotArb on 2026-10-06 with history** (`git subtree add --prefix=perps`). The
+> instrument, Binance USDⓈ-M perps, cannot be traded from an Australian retail account
+> (`../PLAN.md` §13.5), and the findings below are negative in the calibrated queue simulation at any
+> fee the account can reach. The code is kept for the long-tail spot line: the recorder
+> (`recorder/`), the queue simulator calibrated to the paper's real fill rate (`sim/queue_sim.py`,
+> `sim/validate_paper.py`), the archive fetcher with checksums (`sim/fetch_archive.py`) and
+> `leader_features()` in `model/features.py`. Paths below are relative to this directory; the
+> systemd unit still hardcodes the old checkout path. The line's state is in
+> `Wealth-Optimiser/MAP.md`.
 
 Research and tooling for maker strategies on Binance USDⓈ-M futures, starting from Albers, Cucuringu,
 Howison & Shestopaloff, "The Market Maker's Dilemma" ([arXiv:2502.18625](https://arxiv.org/abs/2502.18625)).

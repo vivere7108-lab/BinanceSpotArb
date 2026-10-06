@@ -71,7 +71,7 @@ Add the printed key in GitHub: repo → Settings → Deploy keys → Add (leave 
 
 ```bash
 GIT_SSH_COMMAND='ssh -i /root/.ssh/arb_deploy -o StrictHostKeyChecking=accept-new' \
-  git clone -b claude/great-dijkstra-n3wu1n git@github.com:vivere7108-lab/BinanceSpotArb.git /opt/binance-arb
+  git clone -b main git@github.com:vivere7108-lab/BinanceSpotArb.git /opt/binance-arb
 ```
 
 ## 8. Install and start the recorders
@@ -131,7 +131,7 @@ Add that key as a second deploy key, this time **with** write access if you want
 
 ```bash
 GIT_SSH_COMMAND='ssh -i ~/.ssh/arb_claude -o StrictHostKeyChecking=accept-new' \
-  git clone -b claude/great-dijkstra-n3wu1n git@github.com:vivere7108-lab/BinanceSpotArb.git ~/BinanceSpotArb
+  git clone -b main git@github.com:vivere7108-lab/BinanceSpotArb.git ~/BinanceSpotArb
 git -C ~/BinanceSpotArb config core.sshCommand 'ssh -i ~/.ssh/arb_claude'
 cd ~/BinanceSpotArb && claude remote-control      # log in when prompted
 ```
